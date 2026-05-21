@@ -1,0 +1,30 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.shell
+  name: execute_command
+  title: Execute Command
+  description: Execute a shell command and return its output. Dangerous commands are blocked. Other commands require human approval.
+  tags: [shell, execution]
+  permissions:
+    shell_access: true
+    require_hitl: true
+tool:
+  name: execute_command
+  description: Execute a shell command and return its output. Use for running tests, linters, build commands, and other development tasks. Read-only commands are auto-approved. Dangerous commands are blocked. Other commands require human approval.
+  parameters:
+    command:
+      type: string
+      description: The shell command to execute
+      required: true
+    working_dir:
+      type: string
+      description: Working directory for the command
+      required: false
+implementation:
+  type: builtin
+  handler: execute_command
+hooks:
+  pre_execute:
+    - type: builtin
+      handler: command_approval

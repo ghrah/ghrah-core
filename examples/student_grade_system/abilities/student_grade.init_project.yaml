@@ -1,0 +1,34 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: student_grade
+  name: init_project
+  title: Initialize Project
+  description: >-
+    Initialize project scaffolding for a FastAPI backend or Vue frontend.
+    Creates the necessary directory structure and starter files so that
+    the coding agent can focus on implementation rather than boilerplate.
+  tags: [project, scaffold, init]
+  since: "1"
+  permissions:
+    fs_write: true
+    allowed_paths: ["{{workspace}}/**"]
+tool:
+  name: init_project
+  description: >-
+    Initialize a project scaffolding structure. Creates the necessary
+    files and directories for either a FastAPI backend or a Vue 3 frontend.
+    Returns a list of created files and directories.
+  parameters:
+    project_type:
+      type: string
+      description: "Type of project to initialize: 'backend' for FastAPI+SQLite or 'frontend' for Vue3+Vite"
+      required: true
+      enum: ["backend", "frontend"]
+    target_dir:
+      type: string
+      description: "path of the target directory for the project"
+      required: true
+implementation:
+  type: builtin
+  handler: init_project

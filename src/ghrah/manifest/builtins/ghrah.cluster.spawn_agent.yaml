@@ -1,0 +1,34 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.cluster
+  name: spawn_agent
+  title: Spawn Agent
+  description: Spawn a new peer agent in the cluster. 
+  tags: [cluster, lifecycle]
+  permissions: {}
+tool:
+  name: spawn_agent
+  description: Spawn a new peer agent in the cluster. Specify the agent name, optional description, system prompt, and initial abilities.
+  parameters:
+    name:
+      type: string
+      description: Unique name for the new agent
+      required: true
+    description:
+      type: string
+      description: Description of the new agent's role
+      required: false
+    system_prompt:
+      type: string
+      description: System prompt for the new agent
+      required: false
+    abilities:
+      type: array
+      description: List of ability type names to register (e.g. ['conversation', 'read_file'])
+      required: false
+      items:
+        type: string
+implementation:
+  type: builtin
+  handler: spawn_agent

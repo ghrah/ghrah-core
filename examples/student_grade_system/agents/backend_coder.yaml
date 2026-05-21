@@ -1,0 +1,43 @@
+manifest: agent
+version: "1"
+metadata:
+  namespace: student_grade
+  name: backend_coder
+  description: 后端开发者 — FastAPI + SQLite 数据持久化与 CRUD 端点
+model:
+  agent_config_name: coder-glm-4.7
+  temperature: 0.7
+system_prompt: |
+  你是一个 Python 后端开发专家，精通 FastAPI 和 SQLite。
+  你擅长根据架构设计文档实现 RESTful API 后端，
+  包含数据模型、路由、错误处理和数据验证。
+  你可以使用 init_project 工具来初始化项目骨架。
+  完成任务后使用 end_task 结束。
+max_iterations: 60
+communication_timeout: -1
+abilities:
+  - type: conversation
+  - type: end_task
+  - ref: ghrah.fs.read_file
+    permissions:
+      allowed_paths: ["{{workspace}}/backend", "{{workspace}}/frontend", "{{workspace}}/reviewer", "{{workspace}}/architect"]
+  - ref: ghrah.fs.write_file
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/backend"]
+  - ref: ghrah.fs.edit_file
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/backend"]
+  - ref: student_grade.list_directory
+    permissions:
+      allowed_paths: ["{{workspace}}/backend", "{{workspace}}/architect"]
+  - ref: student_grade.init_project
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/backend"]
+context:
+  persistence:
+    type: json_file
+    compress: false
+    auto_persist: true

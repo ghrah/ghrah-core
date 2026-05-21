@@ -1,0 +1,20 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.core
+  name: end_task
+  title: End Task
+  description: End the current task and generate a final response
+  tags: [core, lifecycle]
+  permissions: {}
+tool:
+  name: end_task
+  description: End the current task and generate a final response
+  parameters:
+    summary:
+      type: string
+      description: Optional summary of the task result
+      required: false
+implementation:
+  type: builtin
+  handler: end_task

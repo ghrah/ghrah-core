@@ -1,0 +1,109 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: example.text
+  name: json_extract
+  title: JSON Field Extractor
+  description: Extract a value from a JSON text by dot-separated path. Useful for pulling specific fields out of API responses or configuration files.
+  tags: [text, json, utility]
+  since: "1"
+  permissions:
+    fs_read_only: true
+    allowed_paths:
+      - "$WORKSPACE/**/*.json"
+tool:
+  name: json_extract
+  description: Parse a JSON string and extract the value at the given dot-separated path. For example, path 'user.address.city' extracts data['user']['address']['city']. Array indices like 'items[0]' are also supported.
+  parameters:
+    json_text:
+      type: string
+      description: The JSON text to parse
+      required: true
+    path:
+      type: string
+      description: Dot-separated path to extract (e.g. 'user.name', 'items[0].id')
+      required: true
+implementation:
+  type: python
+  entrypoint: json_extract
+  source: |
+    from __future__ import annotations
+
+    import json
+    import re
+    from typing import Any
+
+    _INDEX_RE = re.compile(r"^(\w+)\[(\d+)\]$")
+
+    def _resolve_path(data: Any, path: str) -> Any:
+        """Resolve a dot-separated path against a data structure.
+
+        Supports:
+          - dot notation: 'user.address.city'
+          - array indexing: 'items[0]'
+          - combined: 'items[0].name'
+
+        Args:
+            data: The parsed data structure.
+            path: Dot-separated path string.
+
+        Returns:
+            The value at the path.
+
+        Raises:
+            KeyError: If a dict key is not found.
+            IndexError: If a list index is out of range.
+            TypeError: If navigation fails due to type mismatch.
+        """
+        current = data
+        for part in path.split("."):
+            if not part:
+                continue
+            idx_match = _INDEX_RE.match(part)
+            if idx_match:
+                key, index = idx_match.group(1), int(idx_match.group(2))
+                current = current[key][index]
+            else:
+                current = current[part]
+        return current
+
+    async def json_extract(*, json_text: str, path: str) -> dict[str, Any]:
+        """Extract a value from JSON text by path.
+
+        Args:
+            json_text: The JSON string to parse.
+            path: Dot-separated path to the target field.
+
+        Returns:
+            Dict with 'value' key containing the extracted value,
+            or 'error' key if extraction fails.
+        """
+        try:
+            data = json.loads(json_text)
+            value = _resolve_path(data, path)
+            if isinstance(value, (dict, list)):
+                return {"value": value, "type": type(value).__name__}
+            return {"value": value, "type": type(value).__name__}
+        except json.JSONDecodeError as e:
+            return {"error": f"Invalid JSON: {e}"}
+        except (KeyError, IndexError, TypeError) as e:
+            return {"error": f"Path '{path}' not found: {e}"}
+hooks:
+  post_execute:
+    - type: python
+      source: |
+        from __future__ import annotations
+
+        import logging
+
+        logger = logging.getLogger("ghrah.ability.json_extract")
+
+        async def post_extract(context: dict) -> None:
+            """Log a summary after json_extract execution."""
+            result = context.get("result", {})
+            path = context.get("tool_args", {}).get("path", "?")
+            if "error" in result:
+                logger.info("json_extract path=%s failed: %s", path, result["error"])
+            else:
+                value_type = result.get("type", "unknown")
+                logger.info("json_extract path=%s succeeded (type=%s)", path, value_type)

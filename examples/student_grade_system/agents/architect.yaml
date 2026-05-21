@@ -1,0 +1,31 @@
+manifest: agent
+version: "1"
+metadata:
+  namespace: student_grade
+  name: architect
+  description: 架构师 — 定义前后端职责、核心数据结构、前后端交互端点
+model:
+  agent_config_name: architect
+  temperature: 0.7
+system_prompt: |
+  你是一个全栈系统架构师。你负责分析需求并设计系统的整体架构，
+  包括数据结构、模块划分、API 端点和前后端交互协议。
+  你擅长将复杂需求拆解为清晰的设计文档，并输出到文件系统。
+  完成任务后使用 end_task 结束。
+max_iterations: 30
+communication_timeout: -1
+abilities:
+  - type: conversation
+  - type: end_task
+  - ref: ghrah.fs.write_file
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/architect"]
+  - ref: student_grade.list_directory
+    permissions:
+      allowed_paths: ["{{workspace}}/architect"]
+context:
+  persistence:
+    type: json_file
+    compress: false
+    auto_persist: true

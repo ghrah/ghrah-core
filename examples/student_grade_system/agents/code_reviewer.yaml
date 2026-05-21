@@ -1,0 +1,34 @@
+manifest: agent
+version: "1"
+metadata:
+  namespace: student_grade
+  name: code_reviewer
+  description: 代码审查者 — 审查前后端代码，提出改进意见
+model:
+  agent_config_name: coder-glm-4.7
+  temperature: 0.7
+system_prompt: |
+  你是一个资深代码审查专家。你擅长审查前后端代码，
+  从代码质量、安全性、规范性、错误处理和接口一致性等角度提出改进建议，
+  并按严重程度分级（严重/中等/轻微）输出审查报告。
+  完成任务后使用 end_task 结束。
+max_iterations: 60
+communication_timeout: -1
+abilities:
+  - type: conversation
+  - type: end_task
+  - ref: ghrah.fs.read_file
+    permissions:
+      allowed_paths: ["{{workspace}}/backend", "{{workspace}}/frontend", "{{workspace}}/reviewer", "{{workspace}}/architect"]
+  - ref: ghrah.fs.write_file
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/reviewer"]
+  - ref: student_grade.list_directory
+    permissions:
+      allowed_paths: ["{{workspace}}/backend", "{{workspace}}/frontend", "{{workspace}}/reviewer", "{{workspace}}/architect"]
+context:
+  persistence:
+    type: json_file
+    compress: false
+    auto_persist: true

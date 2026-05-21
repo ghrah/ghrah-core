@@ -1,0 +1,20 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.cluster
+  name: broadcast_message
+  title: Broadcast Message
+  description: Broadcast a message to all agents in the cluster (excluding the sender) and collect their responses. Use this for cluster-wide announcements or queries.
+  tags: [cluster, communication]
+  permissions: {}
+tool:
+  name: broadcast_message
+  description: Broadcast a message to all agents in the cluster (excluding the sender) and collect their responses. Use this for cluster-wide announcements or queries.
+  parameters:
+    content:
+      type: string
+      description: Message content to broadcast to all agents
+      required: true
+implementation:
+  type: builtin
+  handler: broadcast_message

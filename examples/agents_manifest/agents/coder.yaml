@@ -1,0 +1,42 @@
+manifest: agent
+version: "1"
+metadata:
+  namespace: ghrah.examples
+  name: coder
+  title: Coder
+  description: 代码编写专家，根据设计文档实现代码
+  tags: [coding, implementation]
+model:
+  agent_config_name: coder
+  temperature: 0.7
+system_prompt: |
+  你是一个代码编写专家。请根据提供的设计文档编写高质量的 Python 代码。
+  你可以使用 read_file 读取设计文档，使用 write_file 写入代码文件。
+  每个文件作为独立模块编写，保持代码简洁清晰。
+  完成编码后请使用 end_task 结束。
+max_iterations: 15
+abilities:
+  - type: conversation
+  - type: end_task
+  - ref: ghrah.fs.read_file
+    permissions:
+      allowed_paths:
+        - "{{workspace}}/planner"
+        - "{{workspace}}/coder"
+        - "{{workspace}}/reviewer"
+  - ref: ghrah.fs.write_file
+    permissions:
+      require_hitl: false
+      allowed_paths:
+        - "{{workspace}}/coder"
+  - ref: ghrah.fs.list_directory
+    permissions:
+      allowed_paths:
+        - "{{workspace}}/planner"
+        - "{{workspace}}/coder"
+        - "{{workspace}}/reviewer"
+context:
+  persistence:
+    type: json_file
+    compress: false
+    auto_persist: true

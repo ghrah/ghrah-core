@@ -1,0 +1,43 @@
+manifest: agent
+version: "1"
+metadata:
+  namespace: student_grade
+  name: frontend_coder
+  description: 前端开发者 — Vue 交互界面与表单
+model:
+  agent_config_name: coder-glm-4.7
+  temperature: 0.7
+system_prompt: |
+  你是一个 Vue.js 前端开发专家，擅长 Vue 3 (Composition API) + Vite。
+  你擅长根据架构设计文档实现交互界面和表单，
+  并与后端 RESTful API 对接。
+  你可以使用 init_project 工具来初始化项目骨架。
+  完成任务后使用 end_task 结束。
+max_iterations: 60
+communication_timeout: -1
+abilities:
+  - type: conversation
+  - type: end_task
+  - ref: ghrah.fs.read_file
+    permissions:
+      allowed_paths: ["{{workspace}}/backend", "{{workspace}}/frontend", "{{workspace}}/reviewer", "{{workspace}}/architect"]
+  - ref: ghrah.fs.write_file
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/frontend"]
+  - ref: ghrah.fs.edit_file
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/frontend"]
+  - ref: student_grade.list_directory
+    permissions:
+      allowed_paths: ["{{workspace}}/frontend", "{{workspace}}/architect"]
+  - ref: student_grade.init_project
+    permissions:
+      require_hitl: false
+      allowed_paths: ["{{workspace}}/frontend"]
+context:
+  persistence:
+    type: json_file
+    compress: false
+    auto_persist: true

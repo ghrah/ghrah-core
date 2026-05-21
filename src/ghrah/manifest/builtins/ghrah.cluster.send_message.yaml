@@ -1,0 +1,24 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.cluster
+  name: send_message
+  title: Send Message
+  description: Send a message to a specific agent in the cluster and wait for its response. Use this for direct point-to-point communication between agents.
+  tags: [cluster, communication]
+  permissions: {}
+tool:
+  name: send_message
+  description: Send a message to a specific agent in the cluster and wait for its response. Use this for direct point-to-point communication between agents.
+  parameters:
+    target:
+      type: string
+      description: Target agent name to send the message to
+      required: true
+    content:
+      type: string
+      description: Message content to send
+      required: true
+implementation:
+  type: builtin
+  handler: send_message

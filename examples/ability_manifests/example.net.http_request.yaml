@@ -1,0 +1,113 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: example.net
+  name: http_request
+  title: HTTP Request
+  description: Send an HTTP request and return the response status, headers, and body. Requires net_access permission.
+  tags: [network, http, utility]
+  since: "1"
+  permissions:
+    net_access: true
+    allowed_paths: []
+    denied_paths: []
+    allowed_commands: []
+    denied_commands:
+      - "curl*"
+      - "wget*"
+tool:
+  name: http_request
+  description: Send an HTTP request to a URL and return the response. Supports GET, POST, PUT, DELETE methods with custom headers and body.
+  parameters:
+    url:
+      type: string
+      description: The URL to send the request to
+      required: true
+    method:
+      type: string
+      description: HTTP method to use
+      required: false
+      default: GET
+      enum:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        - HEAD
+    headers:
+      type: object
+      description: HTTP headers to include in the request
+      required: false
+    body:
+      type: string
+      description: Request body for POST/PUT/PATCH requests
+      required: false
+    timeout:
+      type: integer
+      description: Request timeout in seconds
+      required: false
+      default: 30
+      minimum: 1
+      maximum: 300
+implementation:
+  type: python
+  entrypoint: http_request
+  source: |
+    from __future__ import annotations
+
+    import json
+    from typing import Any
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+
+    async def http_request(
+        *,
+        url: str,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        body: str | None = None,
+        timeout: int = 30,
+    ) -> dict[str, Any]:
+        """Send an HTTP request and return the response.
+
+        Args:
+            url: The URL to send the request to.
+            method: HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD).
+            headers: Optional HTTP headers.
+            body: Optional request body string.
+            timeout: Request timeout in seconds.
+
+        Returns:
+            Dict with status_code, headers, and body fields.
+        """
+        req_headers: dict[str, str] = headers or {}
+        req_body: bytes | None = body.encode("utf-8") if body else None
+
+        if req_body and "Content-Type" not in req_headers:
+            req_headers["Content-Type"] = "application/json"
+
+        request = Request(url, data=req_body, headers=req_headers, method=method)
+
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                status_code = response.status
+                resp_headers = dict(response.headers)
+                resp_body = response.read().decode("utf-8", errors="replace")
+                return {
+                    "status_code": status_code,
+                    "headers": resp_headers,
+                    "body": resp_body,
+                }
+        except HTTPError as e:
+            resp_body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+            return {
+                "status_code": e.code,
+                "headers": dict(e.headers) if e.headers else {},
+                "body": resp_body,
+                "error": e.reason,
+            }
+        except URLError as e:
+            return {"error": f"URL error: {e.reason}"}
+        except Exception as e:
+            return {"error": f"Request failed: {e}"}

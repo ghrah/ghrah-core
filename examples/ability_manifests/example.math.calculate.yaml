@@ -1,0 +1,102 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: example.math
+  name: calculate
+  title: Calculate Expression
+  description: Evaluate a mathematical expression and return the result. Supports basic arithmetic, power, and math module functions.
+  tags: [math, calculation, utility]
+  since: "1"
+  permissions: {}
+tool:
+  name: calculate
+  description: Evaluate a mathematical expression safely. Supports arithmetic operators (+, -, *, /, **, //, %), parentheses, and functions from the math module (e.g. math.sqrt, math.sin).
+  parameters:
+    expression:
+      type: string
+      description: The mathematical expression to evaluate
+      required: true
+implementation:
+  type: python
+  entrypoint: calculate
+  source: |
+    from __future__ import annotations
+
+    import ast
+    import math
+    import operator
+    from typing import Any
+
+    _BINARY_OPS: dict[type, Any] = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: operator.pow,
+    }
+
+    _UNARY_OPS: dict[type, Any] = {
+        ast.UAdd: operator.pos,
+        ast.USub: operator.neg,
+    }
+
+    _MATH_ATTRS: dict[str, float] = {
+        "pi": math.pi,
+        "e": math.e,
+        "tau": math.tau,
+        "inf": math.inf,
+    }
+
+    def _eval_node(node: ast.AST) -> Any:
+        if isinstance(node, ast.Expression):
+            return _eval_node(node.body)
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BinOp):
+            left = _eval_node(node.left)
+            right = _eval_node(node.right)
+            op_type = type(node.op)
+            if op_type not in _BINARY_OPS:
+                raise ValueError(f"Unsupported operator: {op_type.__name__}")
+            return _BINARY_OPS[op_type](left, right)
+        if isinstance(node, ast.UnaryOp):
+            operand = _eval_node(node.operand)
+            op_type = type(node.op)
+            if op_type not in _UNARY_OPS:
+                raise ValueError(f"Unsupported unary operator: {op_type.__name__}")
+            return _UNARY_OPS[op_type](operand)
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                if func.value.id == "math":
+                    attr = func.attr
+                    fn = getattr(math, attr, None)
+                    if fn is None or not callable(fn):
+                        raise ValueError(f"Unsupported math function: {attr}")
+                    args = [_eval_node(a) for a in node.args]
+                    return fn(*args)
+            raise ValueError("Only math module functions are allowed in calls")
+        if isinstance(node, ast.Name):
+            if node.id in _MATH_ATTRS:
+                return _MATH_ATTRS[node.id]
+            raise ValueError(f"Unsupported name: {node.id}")
+        raise ValueError(f"Unsupported AST node: {type(node).__name__}")
+
+    async def calculate(*, expression: str) -> dict[str, str]:
+        """Evaluate a mathematical expression safely.
+
+        Args:
+            expression: The mathematical expression to evaluate.
+
+        Returns:
+            Dict with 'result' key containing the stringified result,
+            or 'error' key if evaluation fails.
+        """
+        try:
+            tree = ast.parse(expression, mode="eval")
+            result = _eval_node(tree)
+            return {"result": str(result)}
+        except Exception as exc:
+            return {"error": f"Failed to evaluate expression: {exc}"}

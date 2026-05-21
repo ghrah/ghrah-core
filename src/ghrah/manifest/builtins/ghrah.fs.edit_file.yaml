@@ -1,0 +1,41 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.fs
+  name: edit_file
+  title: Edit File
+  description: Edit a file by replacing a unique string. The old_str must appear exactly once in the file.
+  tags: [filesystem, write, edit]
+  permissions:
+    fs_write: true
+    require_hitl: true
+tool:
+  name: edit_file
+  description: Edit a file by replacing a unique string. The old_str must appear exactly once in the file. If it appears multiple times, the operation fails and you should provide more surrounding context to make it unique.
+  parameters:
+    file_path:
+      type: string
+      description: Path to the file to edit
+      required: true
+    old_str:
+      type: string
+      description: The exact string to find and replace (must be unique in the file)
+      required: true
+    new_str:
+      type: string
+      description: The replacement string
+      required: true
+    encoding:
+      type: string
+      description: Text encoding for the file
+      required: false
+      default: utf-8
+implementation:
+  type: builtin
+  handler: edit_file
+hooks:
+  pre_execute:
+    - type: builtin
+      handler: write_approval
+      params:
+        check_write_path: true

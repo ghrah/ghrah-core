@@ -1,0 +1,44 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.fs
+  name: move_file
+  title: Move File
+  description: Move or rename a file. Supports cross-directory moves. The source and destination paths are both subject to permission checks.
+  tags: [filesystem, write, move]
+  permissions:
+    fs_write: true
+    fs_read_only: true
+    require_hitl: true
+tool:
+  name: move_file
+  description: Move or rename a file. Supports cross-directory moves. The source and destination paths are both subject to permission checks.
+  parameters:
+    source_path:
+      type: string
+      description: Path to the source file
+      required: true
+    destination_path:
+      type: string
+      description: Path to the destination
+      required: true
+    create_dirs:
+      type: boolean
+      description: Create parent directories of the destination if they do not exist
+      required: false
+      default: true
+    overwrite:
+      type: boolean
+      description: Overwrite the destination file if it already exists
+      required: false
+      default: false
+implementation:
+  type: builtin
+  handler: move_file
+hooks:
+  pre_execute:
+    - type: builtin
+      handler: write_approval
+      params:
+        check_write_path: true
+        check_read_path: true

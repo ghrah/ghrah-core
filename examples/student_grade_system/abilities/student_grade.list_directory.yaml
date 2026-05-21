@@ -1,0 +1,43 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: student_grade
+  name: list_directory
+  title: List Directory (with exclusions)
+  description: >-
+    List files and directories at the specified path, automatically excluding
+    common noise directories (.git, node_modules, __pycache__, etc.).
+    Returns entry names, types, and sizes. Use recursive=true to list all
+    nested contents (excluded dirs are pruned and never traversed).
+  tags: [filesystem, read]
+  permissions:
+    fs_read_only: true
+tool:
+  name: list_directory
+  description: >-
+    List files and directories at the specified path. Automatically excludes
+    common noise directories (.git, .venv, node_modules, __pycache__, .idea,
+    .vscode, dist, build, .next, .DS_Store, .eggs). Returns entry names, types,
+    and sizes. Use recursive=true to list all nested contents. Use exclude_dirs
+    to add extra directory names to exclude (merged with the defaults).
+  parameters:
+    dir_path:
+      type: string
+      description: Path to the directory to list
+      required: true
+    recursive:
+      type: boolean
+      description: Recursively list nested directories
+      required: false
+      default: false
+    exclude_dirs:
+      type: array
+      items:
+        type: string
+      description: >-
+        Additional directory names to exclude from listing (merged with the
+        built-in exclusion list). Pass an empty array to use defaults only.
+      required: false
+implementation:
+  type: builtin
+  handler: list_directory

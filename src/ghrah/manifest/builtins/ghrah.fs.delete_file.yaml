@@ -1,0 +1,28 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.fs
+  name: delete_file
+  title: Delete File
+  description: Delete a file at the specified path. This operation is irreversible.
+  tags: [filesystem, write, delete]
+  permissions:
+    fs_write: true
+    require_hitl: true
+tool:
+  name: delete_file
+  description: Delete a file at the specified path. This operation is irreversible.
+  parameters:
+    file_path:
+      type: string
+      description: Path to the file to delete
+      required: true
+implementation:
+  type: builtin
+  handler: delete_file
+hooks:
+  pre_execute:
+    - type: builtin
+      handler: write_approval
+      params:
+        check_write_path: true

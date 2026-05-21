@@ -1,0 +1,16 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.core
+  name: conversation
+  title: Conversation
+  description: Direct conversation with the LLM without tool usage
+  tags: [core, conversation]
+  permissions: {}
+implementation:
+  type: builtin
+  handler: conversation
+hooks:
+  post_execute:
+    - type: builtin
+      handler: conversation_done

@@ -1,0 +1,42 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.fs
+  name: write_file
+  title: Write File
+  description: Write content to a file. Creates the file and parent directories if they do not exist. Overwrites existing content.
+  tags: [filesystem, write]
+  permissions:
+    fs_write: true
+    require_hitl: true
+tool:
+  name: write_file
+  description: Write content to a file. Creates the file and parent directories if they do not exist. Overwrites existing content.
+  parameters:
+    file_path:
+      type: string
+      description: Path to the file to write
+      required: true
+    content:
+      type: string
+      description: Content to write to the file
+      required: true
+    create_dirs:
+      type: boolean
+      description: Create parent directories if they do not exist
+      required: false
+      default: true
+    encoding:
+      type: string
+      description: Text encoding for the file
+      required: false
+      default: utf-8
+implementation:
+  type: builtin
+  handler: write_file
+hooks:
+  pre_execute:
+    - type: builtin
+      handler: write_approval
+      params:
+        check_write_path: true

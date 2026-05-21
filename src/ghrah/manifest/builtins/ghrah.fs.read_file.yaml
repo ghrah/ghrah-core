@@ -1,0 +1,26 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.fs
+  name: read_file
+  title: Read File
+  description: Read the content of a file at the specified path
+  tags: [filesystem, read]
+  permissions:
+    fs_read_only: true
+tool:
+  name: read_file
+  description: Read the content of a file at the specified path
+  parameters:
+    file_path:
+      type: string
+      description: Path to the file to read
+      required: true
+    encoding:
+      type: string
+      description: Text encoding for the file
+      required: false
+      default: utf-8
+implementation:
+  type: builtin
+  handler: read_file

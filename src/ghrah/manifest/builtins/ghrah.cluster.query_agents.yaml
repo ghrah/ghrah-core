@@ -1,0 +1,20 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.cluster
+  name: query_agents
+  title: Query Agents
+  description: Query registered agents in the cluster. Returns a list of agent names and descriptions. Optionally filter by a substring match on agent name.
+  tags: [cluster, discovery]
+  permissions: {}
+tool:
+  name: query_agents
+  description: Query registered agents in the cluster. Returns a list of agent names and descriptions. Optionally filter by a substring match on agent name.
+  parameters:
+    filter:
+      type: string
+      description: Optional substring to filter agent names
+      required: false
+implementation:
+  type: builtin
+  handler: query_agents

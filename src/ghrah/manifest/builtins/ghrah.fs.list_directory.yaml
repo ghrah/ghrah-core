@@ -1,0 +1,26 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.fs
+  name: list_directory
+  title: List Directory
+  description: List files and directories at the specified path. Returns entry names, types, and sizes. Use recursive=true to list all nested contents.
+  tags: [filesystem, read]
+  permissions:
+    fs_read_only: true
+tool:
+  name: list_directory
+  description: List files and directories at the specified path. Returns entry names, types, and sizes. Use recursive=true to list all nested contents.
+  parameters:
+    dir_path:
+      type: string
+      description: Path to the directory to list
+      required: true
+    recursive:
+      type: boolean
+      description: Recursively list nested directories
+      required: false
+      default: false
+implementation:
+  type: builtin
+  handler: list_directory
