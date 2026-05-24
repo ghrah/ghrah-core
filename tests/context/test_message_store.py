@@ -131,7 +131,7 @@ class TestMessageStoreDelta:
         assert len(delta) == 2
 
     def test_compute_delta_with_objects(self) -> None:
-        """使用对象（模拟 LangChain BaseMessage）的引用比较。"""
+        """使用对象的引用比较。"""
         store = MessageStore()
 
         class FakeMessage:

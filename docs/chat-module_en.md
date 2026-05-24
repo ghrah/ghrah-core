@@ -253,31 +253,19 @@ fmt = LLMFactory.create(resolved)
 # Automatically selects OpenAIFormat or AnthropicFormat based on resolved.provider_type
 ```
 
-## Message Serialization & Migration
+## Message Serialization
 
-[`serialization.py`](../src/ghrah/chat/serialization.py) provides ChatMessage list serialization/deserialization with automatic LangChain legacy format migration:
+[`serialization.py`](../src/ghrah/chat/serialization.py) provides ChatMessage list serialization/deserialization:
 
 ```python
-from ghrah.chat.serialization import serialize_messages, deserialize_messages, migrate_langchain_messages
+from ghrah.chat.serialization import serialize_messages, deserialize_messages
 
 # Serialize
 data = serialize_messages(messages)
 
-# Deserialize (auto-detects new/legacy format)
+# Deserialize
 messages = deserialize_messages(data)
-
-# Explicitly migrate LangChain format
-migrated = migrate_langchain_messages(langchain_data)
 ```
-
-LangChain legacy format messages are automatically converted during deserialization:
-
-| LangChain Type | ChatMessage role | source |
-|----------------|------------------|--------|
-| `HumanMessage` | `user` | `human` |
-| `AIMessage` | `ai` | `None` |
-| `SystemMessage` | `system` | `system` |
-| `ToolMessage` | `tool` | `None` |
 
 ## Response Utilities
 
@@ -299,7 +287,7 @@ src/ghrah/chat/
 ├── content.py           # ContentBlock type system and serialization
 ├── message.py           # ChatMessage dataclass
 ├── response.py          # LLMResponse metadata extraction utilities
-├── serialization.py     # Message serialization/deserialization + LangChain migration
+├── serialization.py     # Message serialization/deserialization
 └── format/
     ├── __init__.py      # ChatFormat ABC, LLMResponse, TokenUsage, create_format
     ├── openai.py        # OpenAIFormat

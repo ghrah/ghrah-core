@@ -9,7 +9,7 @@
 - 迭代生命周期（begin/commit/rollback）
 - 消息委托到 ContextManager
 - AbilityExecutionContext 包含 context_manager 引用
-- 向后兼容 API（_state, _langchain_messages, get_state, set_state）
+- 向后兼容 API（_state, get_state, set_state）
 - 链式历史记录
 - 无 Ability 时抛出 AgentError
 """

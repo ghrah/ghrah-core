@@ -253,31 +253,19 @@ fmt = LLMFactory.create(resolved)
 # 根据 resolved.provider_type 自动选择 OpenAIFormat 或 AnthropicFormat
 ```
 
-## 消息序列化与迁移
+## 消息序列化
 
-[`serialization.py`](../src/ghrah/chat/serialization.py) 提供 ChatMessage 列表的序列化/反序列化，并自动处理 LangChain 旧格式迁移：
+[`serialization.py`](../src/ghrah/chat/serialization.py) 提供 ChatMessage 列表的序列化/反序列化：
 
 ```python
-from ghrah.chat.serialization import serialize_messages, deserialize_messages, migrate_langchain_messages
+from ghrah.chat.serialization import serialize_messages, deserialize_messages
 
 # 序列化
 data = serialize_messages(messages)
 
-# 反序列化（自动检测新/旧格式）
+# 反序列化
 messages = deserialize_messages(data)
-
-# 显式迁移 LangChain 格式
-migrated = migrate_langchain_messages(langchain_data)
 ```
-
-LangChain 旧格式消息在反序列化时会自动转换：
-
-| LangChain 类型 | ChatMessage role | source |
-|----------------|------------------|--------|
-| `HumanMessage` | `user` | `human` |
-| `AIMessage` | `ai` | `None` |
-| `SystemMessage` | `system` | `system` |
-| `ToolMessage` | `tool` | `None` |
 
 ## 响应工具函数
 
@@ -299,7 +287,7 @@ src/ghrah/chat/
 ├── content.py           # ContentBlock 类型体系和序列化
 ├── message.py           # ChatMessage 数据类
 ├── response.py          # LLMResponse 元数据提取工具
-├── serialization.py     # 消息序列化/反序列化 + LangChain 迁移
+├── serialization.py     # 消息序列化/反序列化
 └── format/
     ├── __init__.py      # ChatFormat ABC, LLMResponse, TokenUsage, create_format
     ├── openai.py        # OpenAIFormat

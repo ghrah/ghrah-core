@@ -28,7 +28,7 @@ agent = ActorAgent(config)
 
 ### ChatFormat = LLM Interaction Layer
 
-The self-built [`ChatFormat`](../src/ghrah/chat/format/__init__.py) format adapters unify LLM interaction, replacing the LangChain dependency:
+The self-built [`ChatFormat`](../src/ghrah/chat/format/__init__.py) format adapters unify LLM interaction:
 
 - **OpenAIFormat**: OpenAI/DeepSeek compatible format, supports reasoning_content and multimodal
 - **AnthropicFormat**: Anthropic compatible format, supports thinking blocks and tool_use

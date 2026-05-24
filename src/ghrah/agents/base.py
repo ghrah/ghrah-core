@@ -412,7 +412,7 @@ class ActorAgent:
         """惰性初始化 LLM 客户端。
 
         从 agentconf 读取配置 → LLMFactory 创建 ChatFormat。
-        采用惰性初始化避免 Ray 序列化问题。
+        采用惰性初始化避免进程间序列化问题。
 
         使用 config.effective_agent_config_name 查找 agentconf 配置，
         支持运行时名称与 LLM 配置名称分离（如 worker 池场景）。

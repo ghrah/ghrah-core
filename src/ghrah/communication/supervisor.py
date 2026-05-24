@@ -84,7 +84,7 @@ class SupervisorActor:
     ) -> str:
         """创建并注册一个 Agent，返回 agent name。
 
-        创建 Ray Actor 并注入自身引用，使 Agent 可以通过
+        创建 Agent 实例并注入自身引用，使 Agent 可以通过
         Supervisor 与其他 Agent 通信。
 
         Ability 注册策略：
@@ -359,7 +359,7 @@ class SupervisorActor:
             agent_name: Agent 名称
 
         Returns:
-            Agent 的 Ray Actor handle
+            Agent 实例引用
 
         Raises:
             AgentNotFoundError: Agent 未注册

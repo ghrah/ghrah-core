@@ -11,8 +11,8 @@
 - 显式优先于隐式：必须显式注册才能使用
 - 组合优先于继承：Ability 通过组合注入 Agent，不依赖继承链
 
-注意：AbilityRegistry 是进程本地注册表。在 Ray 多进程场景下，
-每个 Worker 进程拥有独立的 _registry 副本，_register_builtin_abilities()
+注意：AbilityRegistry 是进程本地注册表。在多进程场景下，
+每个进程拥有独立的 _registry 副本，_register_builtin_abilities()
 在每个进程中都会执行（幂等）。动态注册/反注册仅在当前进程生效，
 不会自动同步到其他进程。
 """
@@ -42,7 +42,7 @@ class AbilityRegistry:
     3. Ability 实例化（带参数）
 
     注意：此类为进程本地注册表，不应被实例化。
-    在 Ray 多进程场景下，每个 Worker 进程拥有独立副本。
+    在多进程场景下，每个进程拥有独立副本。
 
     用法::
 

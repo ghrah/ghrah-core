@@ -28,7 +28,7 @@ agent = ActorAgent(config)
 
 ### ChatFormat = LLM 交互层
 
-通过自建的 [`ChatFormat`](../src/ghrah/chat/format/__init__.py) 格式适配器统一 LLM 交互，替代了对 LangChain 的依赖：
+通过自建的 [`ChatFormat`](../src/ghrah/chat/format/__init__.py) 格式适配器统一 LLM 交互：
 
 - **OpenAIFormat**：OpenAI/DeepSeek 兼容格式，支持 reasoning_content 和多模态
 - **AnthropicFormat**：Anthropic 兼容格式，支持 thinking 块和 tool_use

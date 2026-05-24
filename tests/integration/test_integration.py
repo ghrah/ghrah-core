@@ -5,7 +5,7 @@
 """端到端集成测试。
 
 测试 Supervisor + ActorAgent + Ability 的完整流程。
-使用 mock 替代 Ray 和 LLM，专注于验证框架层的集成逻辑。
+使用 mock 替代 LLM，专注于验证框架层的集成逻辑。
 
 测试场景：
 1. Agent + Ability 完整驱动循环（mock LLM）

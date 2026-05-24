@@ -62,7 +62,7 @@ class TestSupervisorActor:
         self, supervisor: SupervisorActor, sample_config: AgentConfig
     ) -> None:
         """重复 spawn 同名 Agent 抛出 RegistryError。"""
-        # 手动注册一个 Agent（绕过 Ray Actor 创建）
+        # 手动注册一个 Agent（直接操作注册表）
         mock_handle = MagicMock()
         supervisor._registry.register("test-agent", sample_config, mock_handle)
 

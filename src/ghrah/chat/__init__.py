@@ -18,7 +18,6 @@
 
 序列化：
 - serialize_messages / deserialize_messages：ChatMessage 列表序列化
-- 支持 ChatMessage 和旧格式自动迁移
 
 工具函数：
 - extract_token_usage / extract_reasoning_content / extract_response_metadata
@@ -48,7 +47,6 @@ from ghrah.chat.response import (
 )
 from ghrah.chat.serialization import (
     deserialize_messages,
-    migrate_langchain_messages,
     serialize_messages,
 )
 
@@ -80,5 +78,4 @@ __all__ = [
     # Serialization
     "serialize_messages",
     "deserialize_messages",
-    "migrate_langchain_messages",  # deprecated alias
 ]

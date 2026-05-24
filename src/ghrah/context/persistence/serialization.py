@@ -15,12 +15,12 @@
 - 序列化使用 ChatMessage.to_dict() / ChatMessage.from_dict()
 - datetime 统一转为 ISO 8601 字符串
 - 所有函数为纯函数，无副作用
-- 支持新格式自动迁移
 """
 
 from __future__ import annotations
 
 import json
+import warnings
 from datetime import datetime
 from typing import Any
 
@@ -141,13 +141,15 @@ def deserialize_action_results(data: list[dict[str, Any]] | None) -> list[dict[s
 def _serialize_chat_messages(messages: list[Any] | None) -> list[dict[str, Any]] | None:
     """将 ChatMessage 列表序列化为 dict 列表。
 
-    兼容处理：如果消息不是 ChatMessage 类型，尝试转换。
-
     Args:
         messages: ChatMessage 列表，None 返回 None
 
     Returns:
         序列化后的 dict 列表，或 None
+
+    Raises:
+        RuntimeWarning: messages 中的项不是 ChatMessage 或 dict 类型时发出警告，
+            可能表示传参错误或数据损坏
     """
     if messages is None:
         return None
@@ -158,6 +160,13 @@ def _serialize_chat_messages(messages: list[Any] | None) -> list[dict[str, Any]]
         elif isinstance(m, dict):
             result.append(m)
         else:
+            warnings.warn(
+                f"Non-ChatMessage object of type {type(m).__name__} passed to "
+                f"serialize_messages; this may indicate incorrect arguments or "
+                f"corrupted data. Attempting best-effort conversion.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             content = getattr(m, "content", str(m))
             role = getattr(m, "type", "unknown")
             if role == "human":
@@ -183,8 +192,6 @@ def _deserialize_chat_messages(
     data: list[dict[str, Any]] | None,
 ) -> list[ChatMessage] | None:
     """从 dict 列表反序列化为 ChatMessage 列表。
-
-    自动反序列化消息列表，兼容旧格式迁移。
 
     Args:
         data: 序列化后的 dict 列表，None 返回 None
@@ -216,8 +223,6 @@ def serialize_messages(messages: list[Any] | None) -> list[dict[str, Any]] | Non
 
 def deserialize_messages(data: list[dict[str, Any]] | None) -> list[ChatMessage] | None:
     """从 dict 列表反序列化为 ChatMessage 列表。
-
-    自动反序列化消息列表，兼容旧格式迁移。
 
     Args:
         data: 序列化后的 dict 列表，None 返回 None
