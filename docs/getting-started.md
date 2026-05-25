@@ -75,6 +75,42 @@ agentconf agent create assistant \
 # ANTHROPIC_API_KEY=your-key
 ```
 
+### 方式二：直接构造 ChatFormat（无需 agentconf）
+
+如果不想使用 agentconf 管理配置，可以直接构造 `ChatFormat` 子类并注入到 Agent 中。这种方式适合快速原型验证、CI 环境或对配置管理有自定义需求的场景。
+
+> **原理**：`ActorAgent._ensure_llm()` 在首次调用时会检查 `self._llm` 是否已存在，如果已设置则直接使用，跳过 agentconf 解析。因此只需在调用 `receive()` / `chat()` 之前手动注入即可。
+
+#### 使用 OpenAI 兼容接口
+
+```python
+import os
+from ghrah.abilities.builtin.conversation import ConversationAbility
+from ghrah.agents.base import ActorAgent
+from ghrah.chat.format.openai import OpenAIFormat
+from ghrah.core.config import AgentConfig
+
+async def main():
+    config = AgentConfig(
+        name="assistant",
+        description="通用对话助手",
+        system_prompt="你是一个友好的 AI 助手，请用中文回答问题。",
+    )
+
+    agent = ActorAgent(config)
+    agent.register_ability(ConversationAbility())
+
+    # 直接构造 ChatFormat 并注入（跳过 agentconf）
+    agent._llm = OpenAIFormat(
+        model="gpt-4o",
+        api_key="sk-your-api-key",
+        base_url="https://api.openai.com/v1",
+    )
+
+    response = await agent.chat("你好，请介绍一下你自己。")
+    print(f"AI: {response}")
+```
+
 ## 快速开始
 
 ### 单 Agent 对话

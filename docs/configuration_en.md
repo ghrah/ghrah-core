@@ -211,6 +211,13 @@ resolved = config_client.resolve_agent("assistant")
 # - max_tokens: int | None
 ```
 
+## Direct ChatFormat Construction (Fallback)
+
+When you don't want to use agentconf, you can directly construct a `ChatFormat` subclass and inject it into the Agent via `agent._llm`. This approach bypasses the agentconf Provider → LLM → Agent inheritance chain, giving the caller full control over LLM parameter management.
+
+> **How it works**: `ActorAgent._ensure_llm()` checks `self._llm` on first invocation. If already set, it returns immediately without going through agentconf resolution. Simply assign the ChatFormat before calling `receive()` / `chat()`.
+
+
 ## Environment Variables
 
 Configure via `.env` file or environment variables (see [`.env.example`](../.env.example)):

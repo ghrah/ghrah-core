@@ -75,6 +75,42 @@ Configure environment variables via `.env` file (see [`.env.example`](../.env.ex
 # ANTHROPIC_API_KEY=your-key
 ```
 
+### Option 2: Direct ChatFormat Construction (Without agentconf)
+
+If you prefer not to use agentconf for configuration management, you can directly construct a `ChatFormat` subclass and inject it into the Agent. This approach is suitable for quick prototyping, CI environments, or scenarios where you have custom configuration management needs.
+
+> **How it works**: `ActorAgent._ensure_llm()` checks whether `self._llm` is already set on first invocation. If it has been set, it is used directly and agentconf resolution is skipped. Simply inject the ChatFormat before calling `receive()` / `chat()`.
+
+#### Using OpenAI-Compatible APIs
+
+```python
+import os
+from ghrah.abilities.builtin.conversation import ConversationAbility
+from ghrah.agents.base import ActorAgent
+from ghrah.chat.format.openai import OpenAIFormat
+from ghrah.core.config import AgentConfig
+
+async def main():
+    config = AgentConfig(
+        name="assistant",
+        description="General chat assistant",
+        system_prompt="You are a friendly AI assistant.",
+    )
+
+    agent = ActorAgent(config)
+    agent.register_ability(ConversationAbility())
+
+    # Directly construct ChatFormat and inject (bypasses agentconf)
+    agent._llm = OpenAIFormat(
+        model="gpt-4o",
+        api_key="sk-your-api-key",
+        base_url="https://api.openai.com/v1",
+    )
+
+    response = await agent.chat("Hello, please introduce yourself.")
+    print(f"AI: {response}")
+```
+
 ## Quick Start
 
 ### Single Agent Chat

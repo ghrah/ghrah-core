@@ -211,6 +211,13 @@ resolved = config_client.resolve_agent("assistant")
 # - max_tokens: int | None
 ```
 
+## 直接构造 ChatFormat（Fallback）
+
+当不想使用 agentconf 时，可以直接构造 `ChatFormat` 子类并通过 `agent._llm` 注入到 Agent 中。这种方式跳过了 agentconf 的 Provider → LLM → Agent 继承链，将 LLM 参数的管控权完全交给调用方。
+
+> **原理**：`ActorAgent._ensure_llm()` 在首次调用时检查 `self._llm`，若已设置则直接返回，不再走 agentconf 解析路径。因此在 `receive()` / `chat()` 之前赋值即可。
+
+
 ## 环境变量
 
 通过 `.env` 文件或环境变量配置（参考 [`.env.example`](../.env.example)）：

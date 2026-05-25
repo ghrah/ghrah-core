@@ -16,13 +16,39 @@ Can be used to build a secure, auditable runtime core for various workloads, ran
 uv sync
 ```
 
-### Configure Agentconf
+### Configure Agentconf (Recommended)
 
 Use the Agentconf TUI to configure your LLM provider, model, and Agent
 
 ```bash
 uv run agentconf
 ```
+
+### Direct Configuration (Without agentconf)
+
+If you prefer not to use agentconf, you can directly construct a `ChatFormat` and inject it into the Agent:
+
+```python
+from ghrah.abilities.builtin.conversation import ConversationAbility
+from ghrah.agents.base import ActorAgent
+from ghrah.chat.format.openai import OpenAIFormat
+from ghrah.core.config import AgentConfig
+
+config = AgentConfig(name="assistant", system_prompt="You are an AI assistant.")
+agent = ActorAgent(config)
+agent.register_ability(ConversationAbility())
+
+# Directly construct ChatFormat and inject (bypasses agentconf， This is a workaround, and it will be improved later)
+agent._llm = OpenAIFormat(
+    model="gpt-4o",
+    api_key="sk-your-api-key",
+    base_url="https://api.openai.com/v1",
+)
+
+response = await agent.chat("Hello!")
+```
+
+Available `ChatFormat` subclasses: `OpenAIFormat`, `AnthropicFormat`, `DeepSeekFormat`. See [Configuration Reference](docs/configuration_en.md) for details.
 
 ### Run Examples
 
