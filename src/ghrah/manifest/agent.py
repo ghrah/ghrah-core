@@ -112,7 +112,7 @@ class AgentManifest(BaseModel):
     metadata: AgentMetadata
     model: ModelConfig
     system_prompt: str = Field(min_length=1)
-    max_iterations: int = Field(default=10, ge=1)
+    max_iterations: int = Field(default=10, ge=-1)
     communication_timeout: float = Field(default=300.0, ge=-1)
     description: str = ""
     abilities: list[AbilityRef] = Field(min_length=1)
