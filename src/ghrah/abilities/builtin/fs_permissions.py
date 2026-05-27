@@ -14,6 +14,8 @@
 - allowed_paths 白名单和 workspace_root 控制自动批准的范围
 - 不在白名单且 require_approval=True 时需要人工批准（HITL）
 - 不在白名单且 require_approval=False 时直接拒绝
+- 未配置白名单且 require_approval=False 时拒绝所有访问（需设置 allowed_paths 或 workspace_root）
+- 未配置白名单且 require_approval=True 时所有访问需人工审批
 - is_subpath 严格前缀匹配（防止意外的前缀匹配）
 """
 
@@ -46,6 +48,9 @@ class FSPermissionChecker:
     - denied_paths 优先于 allowed_paths（硬性拒绝）
     - 路径前缀匹配使用 is_subpath（严格边界检查）
     - 不在白名单时根据 require_approval 决定是要求 HITL 审批还是直接拒绝
+    - 未配置白名单（allowed_paths 和 workspace_root 均为 None）时：
+      - require_approval=True：所有路径均需人工审批
+      - require_approval=False：所有路径均被拒绝
 
     用法::
 
@@ -128,7 +133,7 @@ class FSPermissionChecker:
         if self._allowed_paths is None and self._workspace_root is None:
             if self._require_approval:
                 return True, "pending"
-            return True, None
+            return False, "Permission denied: no allowed paths configured"
 
         if self._is_in_denied_paths(resolved):
             return False, f"Permission denied: {path} is in denied paths"

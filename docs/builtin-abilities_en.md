@@ -515,7 +515,7 @@ flowchart TD
     D -->|Yes| K[Hard deny]
     D -->|No| B{Has whitelist/workspace?}
     B -->|No| C{Require approval?}
-    C -->|No| J[Default allow]
+    C -->|No| J[Deny (no whitelist configured)]
     C -->|Yes| E[Require human approval]
     B -->|Yes| F{Path in whitelist/workspace?}
     F -->|Yes| G[Auto approve]
@@ -561,7 +561,7 @@ allowed, status = checker.check_read_path("/home/user/project/secrets/key.pem")
 | `allowed_paths` | `list[str] \| None` | `None` | Allowed paths whitelist |
 | `workspace_root` | `str \| None` | `None` | Workspace root directory (symlinks resolved) |
 | `denied_paths` | `list[str] \| None` | `None` | Denied paths blacklist (takes priority over whitelist) |
-| `require_approval` | `bool` | `True` | Whether to require human approval for paths not in whitelist |
+| `require_approval` | `bool` | `True` | Whether to require human approval for paths not in whitelist; when no whitelist is configured and `False`, all access is denied |
 
 ## AccessApprovalHook
 

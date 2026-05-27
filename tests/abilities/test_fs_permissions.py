@@ -35,11 +35,11 @@ class TestFSPermissionChecker:
         assert status == "pending"
 
     def test_no_restrictions_write_auto(self) -> None:
-        """无限制且不需要批准时允许所有写入。"""
+        """无白名单配置且不需要批准时拒绝所有访问。"""
         checker = FSPermissionChecker(require_approval=False)
         allowed, status = checker.check_write_path("/any/path/file.txt")
-        assert allowed is True
-        assert status is None
+        assert allowed is False
+        assert "no allowed paths configured" in (status or "")
 
     def test_no_restrictions_write_needs_approval(self) -> None:
         """无限制但需要批准时返回 pending。"""
@@ -282,11 +282,11 @@ class TestCheckAccess:
             assert status is None
 
     def test_read_auto_approved_no_restrictions(self) -> None:
-        """无限制且不需要批准时读取自动批准。"""
+        """无白名单配置且不需要批准时读取被拒绝。"""
         checker = FSPermissionChecker(require_approval=False)
         allowed, status = checker.check_access("/any/path", operation="read")
-        assert allowed is True
-        assert status is None
+        assert allowed is False
+        assert "no allowed paths configured" in (status or "")
 
     def test_read_needs_approval_no_restrictions(self) -> None:
         """无限制但需要批准时读取返回 pending。"""

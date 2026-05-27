@@ -515,7 +515,7 @@ flowchart TD
     D -->|是| K[硬性拒绝]
     D -->|否| B{有白名单/工作路径?}
     B -->|否| C{需要批准?}
-    C -->|否| J[默认允许]
+    C -->|否| J[拒绝（无白名单配置）]
     C -->|是| E[需要人工批准]
     B -->|是| F{路径在白名单/工作路径下?}
     F -->|是| G[自动批准]
@@ -561,7 +561,7 @@ allowed, status = checker.check_read_path("/home/user/project/secrets/key.pem")
 | `allowed_paths` | `list[str] \| None` | `None` | 允许访问的路径白名单 |
 | `workspace_root` | `str \| None` | `None` | 工作路径根目录（解析符号链接） |
 | `denied_paths` | `list[str] \| None` | `None` | 拒绝访问的路径黑名单（优先于白名单） |
-| `require_approval` | `bool` | `True` | 不在白名单时是否需要人工批准 |
+| `require_approval` | `bool` | `True` | 不在白名单时是否需要人工批准；未配置白名单时 `False` 拒绝所有访问 |
 
 ## AccessApprovalHook
 
