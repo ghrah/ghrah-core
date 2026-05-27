@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -148,7 +149,7 @@ class EditFileAbility(Ability):
 
         try:
             # 读取文件
-            with open(file_path, encoding=encoding) as f:
+            with Path(file_path).open(encoding=encoding) as f:
                 content = f.read()
 
             # 检查 old_str 匹配次数
@@ -182,7 +183,7 @@ class EditFileAbility(Ability):
             new_content = content.replace(old_str, new_str, 1)
 
             # 写回文件
-            with open(file_path, "w", encoding=encoding) as f:
+            with Path(file_path).open("w", encoding=encoding) as f:
                 f.write(new_content)
 
             logger.debug(f"EditFileAbility: replaced 1 occurrence in {file_path}")

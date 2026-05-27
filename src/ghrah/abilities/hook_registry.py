@@ -9,7 +9,7 @@
 
 当前注册的内建 Hook：
 - "conversation_done" → ConversationDoneHook
-- "write_approval" → WriteApprovalHook
+- "write_approval" → AccessApprovalHook（别名 WriteApprovalHook）
 - "command_approval" → CommandApprovalHook
 
 注意：

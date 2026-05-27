@@ -296,8 +296,6 @@ class TestManifestResolver:
 
         assert result.config.name == "test_agent"
 
-    
-
 
 class TestAbilityRegistryRegisterFromResolved:
     """AbilityRegistry.register_from_resolved 测试。"""

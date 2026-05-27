@@ -23,7 +23,8 @@
 
 权限模块：
 - FSPermissionChecker: 文件系统路径权限检查器
-- WriteApprovalHook: 写入操作人工批准 Hook
+- AccessApprovalHook: 读写操作人工批准 Hook
+- WriteApprovalHook: AccessApprovalHook 的向后兼容别名
 - CommandSafetyChecker: 命令安全分类器（含子命令路由）
 - CommandApprovalHook: 命令执行审批 Hook
 """
@@ -50,7 +51,11 @@ from ghrah.abilities.builtin.execute_command import (
     ExecuteCommandAbility,
     ExecuteCommandInput,
 )
-from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, WriteApprovalHook
+from ghrah.abilities.builtin.fs_permissions import (
+    AccessApprovalHook,
+    FSPermissionChecker,
+    WriteApprovalHook,
+)
 from ghrah.abilities.builtin.list_directory import ListDirectoryAbility
 from ghrah.abilities.builtin.move_file import MoveFileAbility
 from ghrah.abilities.builtin.read_file import ReadFileAbility
@@ -77,6 +82,7 @@ __all__ = [
     "SpawnAgentAbility",
     # 文件系统权限模块
     "FSPermissionChecker",
+    "AccessApprovalHook",
     "WriteApprovalHook",
     # 命令安全模块
     "CommandSafetyChecker",

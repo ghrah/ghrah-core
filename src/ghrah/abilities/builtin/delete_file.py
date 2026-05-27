@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import logging
-import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -124,13 +124,13 @@ class DeleteFileAbility(Ability):
         logger.debug(f"DeleteFileAbility: deleting {file_path}")
 
         try:
-            if not os.path.exists(file_path):
+            if not Path(file_path).exists():
                 return ActionResult(
                     outcome=ActionOutcome.FAILURE,
                     data={"error": f"File not found: {file_path}"},
                 )
 
-            os.remove(file_path)
+            Path(file_path).unlink()
 
             logger.debug(f"DeleteFileAbility: deleted {file_path}")
 

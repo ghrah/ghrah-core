@@ -2,24 +2,27 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""文件系统权限检查模块：共享权限逻辑和写入操作批准 Hook。
+"""文件系统权限检查模块：共享权限逻辑和访问批准 Hook。
 
 提供：
-- FSPermissionChecker: 路径权限检查（白名单 + 工作路径自动批准）
-- WriteApprovalHook: PRE_EXECUTE Hook，对写入操作进行人工批准（HITL）
+- FSPermissionChecker: 路径权限检查（白名单 + 黑名单 + 工作路径 + 统一审批）
+- AccessApprovalHook: PRE_EXECUTE Hook，对读写操作进行人工批准（HITL）
+- WriteApprovalHook: AccessApprovalHook 的向后兼容别名
 
-权限模型：
-- 读取操作：allowed_paths 白名单控制
-- 写入操作：双重授权机制
-  - 自动批准：路径在 allowed_paths 或 workspace_root 下
-  - 人工批准（HITL）：路径不在白名单时暂停执行，等待人工确认
+权限模型（统一读写）：
+- denied_paths 优先（硬性拒绝，不可覆盖）
+- allowed_paths 白名单和 workspace_root 控制自动批准的范围
+- 不在白名单且 require_approval=True 时需要人工批准（HITL）
+- 不在白名单且 require_approval=False 时直接拒绝
+- is_subpath 严格前缀匹配（防止意外的前缀匹配）
 """
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ghrah.abilities._utils import is_subpath
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 
 if TYPE_CHECKING:
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FSPermissionChecker",
+    "AccessApprovalHook",
     "WriteApprovalHook",
 ]
 
@@ -35,128 +39,177 @@ __all__ = [
 class FSPermissionChecker:
     """文件系统路径权限检查器。
 
-    统一管理 allowed_paths 白名单和 workspace_root 工作路径，
+    统一管理 allowed_paths 白名单、denied_paths 黑名单和 workspace_root 工作路径，
     为文件系统 Ability 提供一致的权限检查逻辑。
+
+    读写权限模型统一：
+    - denied_paths 优先于 allowed_paths（硬性拒绝）
+    - 路径前缀匹配使用 is_subpath（严格边界检查）
+    - 不在白名单时根据 require_approval 决定是要求 HITL 审批还是直接拒绝
 
     用法::
 
         checker = FSPermissionChecker(
             allowed_paths=["/tmp/data", "/home/user/docs"],
             workspace_root="/home/user/project",
+            denied_paths=["/home/user/project/secrets"],
         )
 
-        # 读取权限
-        allowed, reason = checker.check_read_path("/tmp/data/file.txt")
+        # 统一访问检查
+        allowed, status = checker.check_access("/tmp/data/file.txt", operation="read")
+        allowed, status = checker.check_access("/tmp/data/output.txt", operation="write")
 
-        # 写入权限
-        allowed, approval = checker.check_write_path("/tmp/data/output.txt")
+        # 兼容接口
+        allowed, status = checker.check_read_path("/tmp/data/file.txt")
+        allowed, status = checker.check_write_path("/tmp/data/output.txt")
     """
 
     def __init__(
         self,
         allowed_paths: list[str] | None = None,
         workspace_root: str | None = None,
+        denied_paths: list[str] | None = None,
         require_approval: bool = True,
     ) -> None:
         self._allowed_paths = self._normalize_paths(allowed_paths) if allowed_paths else None
-        self._workspace_root = os.path.abspath(workspace_root) if workspace_root else None
+        self._workspace_root = Path(workspace_root).resolve() if workspace_root else None
+        self._denied_paths = self._normalize_paths(denied_paths) if denied_paths else None
         self._require_approval = require_approval
 
     @staticmethod
-    def _normalize_paths(paths: list[str]) -> list[str]:
-        """将路径列表标准化为绝对路径。"""
-        return [os.path.abspath(p) for p in paths]
+    def _normalize_paths(paths: list[str]) -> list[Path]:
+        """将路径列表标准化为绝对路径（解析符号链接）。"""
+        return [Path(p).resolve() for p in paths]
 
-    def _is_in_allowed_paths(self, path: str) -> bool:
-        """检查路径是否在白名单中。"""
-        abs_path = os.path.abspath(path)
+    @staticmethod
+    def _resolve(path: str | Path) -> Path:
+        """将路径解析为绝对路径（解析符号链接）。"""
+        return Path(path).resolve()
+
+    def _is_in_allowed_paths(self, resolved: Path) -> bool:
+        """检查已解析路径是否在白名单中（严格前缀匹配）。"""
         if self._allowed_paths is None:
             return False
-        return any(abs_path.startswith(allowed) for allowed in self._allowed_paths)
+        return any(is_subpath(resolved, allowed) for allowed in self._allowed_paths)
 
-    def _is_in_workspace(self, path: str) -> bool:
-        """检查路径是否在工作路径下。"""
+    def _is_in_workspace(self, resolved: Path) -> bool:
+        """检查已解析路径是否在工作路径下（严格前缀匹配）。"""
         if self._workspace_root is None:
             return False
-        abs_path = os.path.abspath(path)
-        return abs_path.startswith(self._workspace_root)
+        return is_subpath(resolved, self._workspace_root)
 
-    def check_read_path(self, path: str) -> tuple[bool, str]:
-        """检查读取路径权限。
+    def _is_in_denied_paths(self, resolved: Path) -> bool:
+        """检查已解析路径是否在黑名单中（严格前缀匹配）。黑名单优先于白名单。"""
+        if self._denied_paths is None:
+            return False
+        return any(is_subpath(resolved, denied) for denied in self._denied_paths)
 
-        Args:
-            path: 要检查的文件路径
+    def _is_path_allowed(self, resolved: Path) -> bool:
+        """检查已解析路径是否被允许（在白名单或工作路径下，且不在黑名单中）。"""
+        if self._is_in_denied_paths(resolved):
+            return False
+        return self._is_in_allowed_paths(resolved) or self._is_in_workspace(resolved)
 
-        Returns:
-            (allowed, reason) 元组：
-            - (True, ""): 允许访问
-            - (False, reason): 拒绝访问并给出原因
-        """
-        abs_path = os.path.abspath(path)
-
-        # 如果没有配置任何限制，默认允许
-        if self._allowed_paths is None and self._workspace_root is None:
-            return True, ""
-
-        if self._is_in_allowed_paths(abs_path) or self._is_in_workspace(abs_path):
-            return True, ""
-
-        return False, f"Permission denied: {path} not in allowed paths"
-
-    def check_write_path(self, path: str) -> tuple[bool, str | None]:
-        """检查写入路径权限。
+    def check_access(self, path: str, operation: str = "read") -> tuple[bool, str | None]:
+        """统一访问权限检查。
 
         Args:
             path: 要检查的文件路径
+            operation: 操作类型 "read" 或 "write"
 
         Returns:
-            (allowed, approval_status) 元组：
+            (allowed, status) 元组：
             - (True, None): 自动批准
-            - (True, "pending"): 需要人工批准
-            - (False, reason): 拒绝
+            - (True, "pending"): 需要 HITL 审批
+            - (False, reason): 拒绝访问
         """
-        abs_path = os.path.abspath(path)
+        resolved = self._resolve(path)
 
-        # 如果没有配置白名单，检查是否需要人工批准
         if self._allowed_paths is None and self._workspace_root is None:
             if self._require_approval:
                 return True, "pending"
             return True, None
 
-        # 白名单或工作路径下 → 自动批准
-        if self._is_in_allowed_paths(abs_path) or self._is_in_workspace(abs_path):
+        if self._is_in_denied_paths(resolved):
+            return False, f"Permission denied: {path} is in denied paths"
+
+        if self._is_path_allowed(resolved):
             return True, None
 
-        # 不在白名单 → 需要人工批准
         if self._require_approval:
             return True, "pending"
 
-        # 不需要批准但也不在白名单 → 拒绝
         return False, f"Permission denied: {path} not in allowed paths"
+
+    def check_read_path(self, path: str) -> tuple[bool, str | None]:
+        """检查读取路径权限。
+
+        委托给 check_access(operation="read")。
+
+        Args:
+            path: 要检查的文件路径
+
+        Returns:
+            (allowed, status) 元组：
+            - (True, None): 允许访问
+            - (True, "pending"): 需要 HITL 审批
+            - (False, reason): 拒绝访问
+        """
+        return self.check_access(path, operation="read")
+
+    def check_write_path(self, path: str) -> tuple[bool, str | None]:
+        """检查写入路径权限。
+
+        委托给 check_access(operation="write")。
+
+        Args:
+            path: 要检查的文件路径
+
+        Returns:
+            (allowed, status) 元组：
+            - (True, None): 自动批准
+            - (True, "pending"): 需要 HITL 审批
+            - (False, reason): 拒绝
+        """
+        return self.check_access(path, operation="write")
 
     @property
     def allowed_paths(self) -> list[str] | None:
         """返回已配置的允许路径列表。"""
-        return self._allowed_paths
+        if self._allowed_paths is None:
+            return None
+        return [str(p) for p in self._allowed_paths]
 
     @property
     def workspace_root(self) -> str | None:
-        """返回已配置的工作路径根目录。"""
-        return self._workspace_root
+        """返回已配置的工作路径根目录。
+
+        注意：返回值经过 resolve() 解析符号链接，
+        可能与传入的原始路径不同。
+        """
+        return str(self._workspace_root) if self._workspace_root is not None else None
+
+    @property
+    def denied_paths(self) -> list[str] | None:
+        """返回已配置的拒绝路径列表。"""
+        if self._denied_paths is None:
+            return None
+        return [str(p) for p in self._denied_paths]
 
 
-class WriteApprovalHook(Hook):
-    """写入操作的人工批准 Hook。
+class AccessApprovalHook(Hook):
+    """访问操作的人工批准 Hook。
 
-    在 PRE_EXECUTE 触发点拦截写入类 Ability（write_file, edit_file, move_file, delete_file），
-    检查操作路径是否需要人工批准。
+    在 PRE_EXECUTE 触发点拦截需要审批的 Ability（读取和写入类），
+    根据 FSPermissionChecker.check_access() 判断是否需要人工批准。
 
     审批流程：
     1. 从 tool_args 中提取目标路径
-    2. 通过 FSPermissionChecker 检查权限
-    3. 如果需要人工批准 → 返回 NEEDS_INPUT（暂停执行）
-    4. 如果自动批准 → 放行
-    5. 如果拒绝 → 返回 stop
+    2. 根据 Ability 类型判断操作类型（读/写）
+    3. 通过 FSPermissionChecker 检查权限
+    4. 如果需要人工批准 → 返回 HITL（暂停执行）
+    5. 如果自动批准 → 放行
+    6. 如果拒绝 → 返回 stop
 
     用法::
 
@@ -164,41 +217,42 @@ class WriteApprovalHook(Hook):
             allowed_paths=["/tmp"],
             require_approval=True,
         )
-        hook = WriteApprovalHook(checker)
-        ability = WriteFileAbility(hooks=[hook])
+        hook = AccessApprovalHook(checker)
+        ability = ReadFileAbility(hooks=[hook])
     """
 
     hook_point = HookPoint.PRE_EXECUTE
 
-    # 需要写入批准的 ability 名称集合
     WRITE_ABILITIES = {"write_file", "edit_file", "move_file", "delete_file"}
+    READ_ABILITIES = {"read_file", "list_directory"}
 
     def __init__(self, checker: FSPermissionChecker) -> None:
         self._checker = checker
 
     async def should_trigger(self, context: AbilityExecutionContext) -> bool:
-        """只在写入类 Ability 时触发检查。"""
-        return context.current_ability_name in self.WRITE_ABILITIES
+        """在读写类 Ability 时触发检查。"""
+        name = context.current_ability_name
+        return name in self.WRITE_ABILITIES or name in self.READ_ABILITIES
 
     async def execute(
         self, context: AbilityExecutionContext, result: ActionResult | None
     ) -> HookResult:
-        """检查写入路径权限，决定是否需要人工批准。"""
-        # 从 tool_args 中提取目标路径
+        """检查访问路径权限，决定是否需要人工批准。"""
         tool_args = context.tool_args or context.accumulated_data.get("tool_args", {})
         target_path = self._extract_target_path(context.current_ability_name, tool_args)
 
         if not target_path:
             return HookResult.continue_()
 
-        allowed, approval_status = self._checker.check_write_path(target_path)
+        operation = "write" if context.current_ability_name in self.WRITE_ABILITIES else "read"
+        allowed, status = self._checker.check_access(target_path, operation)
 
         if not allowed:
-            return HookResult.stop(message=f"Permission denied: {target_path} not in allowed paths")
+            return HookResult.stop(message=status or f"Permission denied: {target_path}")
 
-        if approval_status == "pending":
+        if status == "pending":
             return HookResult.hitl(
-                message=f"Human approval required for write operation on: {target_path}",
+                message=f"Human approval required for {operation} operation on: {target_path}",
             )
 
         return HookResult.continue_()
@@ -208,4 +262,7 @@ class WriteApprovalHook(Hook):
         """根据 ability 类型提取目标路径。"""
         if ability_name == "move_file":
             return tool_args.get("destination_path")
-        return tool_args.get("file_path")
+        return tool_args.get("file_path") or tool_args.get("dir_path")
+
+
+WriteApprovalHook = AccessApprovalHook

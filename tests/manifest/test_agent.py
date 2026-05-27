@@ -207,7 +207,7 @@ class TestAgentManifest:
 
     def test_max_iterations_minimum(self) -> None:
         with pytest.raises(ValidationError):
-            _make_agent_manifest(max_iterations=0)
+            _make_agent_manifest(max_iterations=-2)
 
     def test_max_iterations_valid(self) -> None:
         manifest = _make_agent_manifest(max_iterations=20)

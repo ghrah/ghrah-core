@@ -82,7 +82,7 @@ Core → EventBus → Subject (confirm/record) → Observer (render/approve)
 sequenceDiagram
     participant Agent as ActorAgent
     participant LAE as LocalAbilityExecutor
-    participant Hook as WriteApprovalHook
+    participant Hook as AccessApprovalHook
     participant HFS as HITLFutureStore
     participant EP as EventPublisher
     participant Obs as Observer
@@ -125,27 +125,34 @@ sequenceDiagram
     RAE-->>Agent: Continue drive loop
 ```
 
-## Built-in HITL Hook: WriteApprovalHook
+## Built-in HITL Hook: AccessApprovalHook
 
-[`WriteApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) is the built-in write operation approval Hook:
+[`AccessApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) is the built-in unified access approval Hook, covering both read and write operations:
 
 ```python
-from ghrah.abilities.builtin import WriteFileAbility, FSPermissionChecker
+from ghrah.abilities.builtin import ReadFileAbility, WriteFileAbility, FSPermissionChecker
 
-# Configure write approval: paths not in whitelist require HITL approval
 permission_checker = FSPermissionChecker(
-    allowed_dirs=["/tmp/workspace"],  # Whitelist directories
-    require_approval=True,            # Non-whitelisted paths require approval
+    denied_paths=["/etc/shadow", "/etc/passwd"],  # Priority: deny list takes precedence
+    allowed_paths=["/tmp/workspace"],              # Whitelist directories: auto-approve
+    workspace_root="/home/user/project",           # Workspace root directory
 )
 
-ability = WriteFileAbility(permission_checker=permission_checker)
+# AccessApprovalHook covers read_file, list_directory, write_file, edit_file, move_file, delete_file
+from ghrah.abilities.builtin.fs_permissions import AccessApprovalHook
+hook = AccessApprovalHook(permission_checker)
 ```
+
+`WriteApprovalHook` is a backward-compatible alias for `AccessApprovalHook`.
+
+`FSPermissionChecker` provides `check_access(path, operation)` for unified read (`operation='read'`) and write (`operation='write'`) permission checking.
 
 ### Approval Logic
 
-1. Write path is in `allowed_dirs` whitelist → Pass through
-2. Write path is not in whitelist and `require_approval=True` → Trigger HITL approval
-3. Write path is not in whitelist and `require_approval=False` → Reject
+1. Path is in `denied_paths` deny list → Hard deny (highest priority)
+2. Path is in `allowed_paths` whitelist or under `workspace_root` → Auto-approve
+3. Path is not in whitelist and `require_approval=True` → Trigger HITL approval
+4. Path is not in whitelist and `require_approval=False` → Hard deny
 
 ## Custom HITL Hook
 

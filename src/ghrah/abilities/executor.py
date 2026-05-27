@@ -26,8 +26,10 @@ import copy
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ghrah.abilities._utils import ABILITY_PATH_SPECS
 from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.hooks import HookPoint, HookResult
@@ -210,6 +212,7 @@ class LocalAbilityExecutor(AbilityExecutor):
         hooks: list[Hook] | None = None,
         event_publisher: EventPublisher | None = None,
         hitl_timeout: float = 300.0,
+        workspace_root: str | None = None,
     ) -> None:
         """初始化本地执行器。
 
@@ -218,12 +221,14 @@ class LocalAbilityExecutor(AbilityExecutor):
             hooks: 已注册的 Hook 列表
             event_publisher: 事件发布器（默认 NullEventPublisher）
             hitl_timeout: HITL 等待超时时间（秒）
+            workspace_root: 工作区根目录，用于将相对路径解析到沙盒内（None 表示不解析）
         """
         self._agent_name = agent_name
         self._hooks: list[Hook] = hooks or []
         self._event_publisher: EventPublisher = event_publisher or NullEventPublisher()
         self._hitl_store = HITLFutureStore()
         self._hitl_timeout = hitl_timeout
+        self._workspace_root = Path(workspace_root).resolve() if workspace_root else None
 
     @property
     def hitl_store(self) -> HITLFutureStore:
@@ -406,14 +411,16 @@ class LocalAbilityExecutor(AbilityExecutor):
         Returns:
             dict 包含 "ability_name" 和 "action_result"
         """
+        resolved_args = self._resolve_paths(tool_args, ability.name)
+
         per_ability_context = AbilityExecutionContext(
             current_ability_name=ability.name,
-            tool_args=tool_args,
+            tool_args=resolved_args,
             agent_state=context_manager.get_current_state(),
             context_manager=context_manager,
             accumulated_data={
                 **copy.deepcopy(accumulated_data),
-                "tool_args": tool_args,
+                "tool_args": resolved_args,
             },
             last_action_result=context_manager.last_action_result,
             agent_name=self._agent_name,
@@ -422,6 +429,39 @@ class LocalAbilityExecutor(AbilityExecutor):
         action_result = await self.execute_ability(ability, per_ability_context)
 
         return {"ability_name": ability.name, "action_result": action_result}
+
+    def _resolve_paths(self, tool_args: dict[str, Any], ability_name: str) -> dict[str, Any]:
+        """将 tool_args 中的相对路径解析到 workspace_root 下。
+
+        如果 workspace_root 未设置，直接返回原 tool_args。
+        仅对 ABILITY_PATH_SPECS 中已知的路径参数进行解析，
+        绝对路径保持不变。
+
+        Args:
+            tool_args: LLM 工具调用参数
+            ability_name: Ability 名称
+
+        Returns:
+            解析后的 tool_args（副本）
+        """
+        if self._workspace_root is None:
+            return tool_args
+
+        spec = ABILITY_PATH_SPECS.get(ability_name)
+        if spec is None:
+            return tool_args
+
+        resolved = dict(tool_args)
+        for key in spec.path_keys:
+            value = resolved.get(key)
+            if value and isinstance(value, str) and not Path(value).is_absolute():
+                resolved[key] = str((Path(self._workspace_root) / value).resolve())
+        for key in spec.working_dir_keys:
+            value = resolved.get(key)
+            if value and isinstance(value, str) and not Path(value).is_absolute():
+                resolved[key] = str((Path(self._workspace_root) / value).resolve())
+
+        return resolved
 
     async def run_hooks(
         self,

@@ -121,24 +121,33 @@ class ConversationDoneHook(Hook):
         return HookResult.stop()  # Pure conversation only needs one LLM call
 ```
 
-### WriteApprovalHook
+### AccessApprovalHook
 
-[`WriteApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) requests human approval before write operations (HITL):
+[`AccessApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) requests human approval before read and write operations (HITL), covering `read_file`, `list_directory`, `write_file`, `edit_file`, `move_file`, `delete_file`:
 
 ```python
-class WriteApprovalHook(Hook):
-    """Human approval Hook for write operations"""
+class AccessApprovalHook(Hook):
+    """Access operation human approval Hook"""
     hook_point = HookPoint.PRE_EXECUTE
     
+    WRITE_ABILITIES = {"write_file", "edit_file", "move_file", "delete_file"}
+    READ_ABILITIES = {"read_file", "list_directory"}
+    
     async def should_trigger(self, context: AbilityExecutionContext) -> bool:
-        return context.current_ability_name in ("write_file", "edit_file")
+        # Trigger for read and write Abilities
+        name = context.current_ability_name
+        return name in self.WRITE_ABILITIES or name in self.READ_ABILITIES
     
     async def execute(self, context, result) -> HookResult:
-        approved = input(f"Allow write to {context.tool_args.get('path')}? [y/N] ")
-        if approved.lower() != "y":
-            return HookResult.stop()
-        return HookResult.continue_()
+        # Request human approval
+        tool_args = context.tool_args or context.accumulated_data.get("tool_args", {})
+        target_path = tool_args.get("file_path") or tool_args.get("dir_path")
+        operation = "write" if context.current_ability_name in self.WRITE_ABILITIES else "read"
+        allowed, status = self._checker.check_access(target_path, operation)
+        ...
 ```
+
+`WriteApprovalHook` is a backward-compatible alias for `AccessApprovalHook`.
 
 ### FSPermissionHook
 

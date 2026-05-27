@@ -9,8 +9,8 @@ ghrah provides a set of built-in Abilities covering common conversation, file sy
 | [`ConversationAbility`](../src/ghrah/abilities/builtin/conversation.py) | `conversation` | None | `ConversationDoneHook` | Pure LLM conversation |
 | [`EndTaskAbility`](../src/ghrah/abilities/builtin/end_task.py) | `end_task` | mode=toolcall | None | Terminate loop |
 | [`ReadFileAbility`](../src/ghrah/abilities/builtin/read_file.py) | `read_file` | ✅ | FSPermissionHook | File reading |
-| [`WriteFileAbility`](../src/ghrah/abilities/builtin/write_file.py) | `write_file` | ✅ | FSPermissionHook + WriteApprovalHook | File writing |
-| [`EditFileAbility`](../src/ghrah/abilities/builtin/edit_file.py) | `edit_file` | ✅ | FSPermissionHook + WriteApprovalHook | File editing |
+| [`WriteFileAbility`](../src/ghrah/abilities/builtin/write_file.py) | `write_file` | ✅ | FSPermissionHook + AccessApprovalHook | File writing |
+| [`EditFileAbility`](../src/ghrah/abilities/builtin/edit_file.py) | `edit_file` | ✅ | FSPermissionHook + AccessApprovalHook | File editing |
 | [`MoveFileAbility`](../src/ghrah/abilities/builtin/move_file.py) | `move_file` | ✅ | FSPermissionHook | File move/rename |
 | [`DeleteFileAbility`](../src/ghrah/abilities/builtin/delete_file.py) | `delete_file` | ✅ | FSPermissionHook | File deletion |
 | [`ListDirectoryAbility`](../src/ghrah/abilities/builtin/list_directory.py) | `list_directory` | ✅ | FSPermissionHook | Directory listing |
@@ -158,7 +158,7 @@ Creates new files or overwrites existing ones, with automatic parent directory c
 
 ```python
 from ghrah.abilities.builtin.write_file import WriteFileAbility
-from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, WriteApprovalHook
+from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, AccessApprovalHook
 
 # No permission restriction
 ability = WriteFileAbility()
@@ -168,7 +168,7 @@ checker = FSPermissionChecker(allowed_paths=["/tmp/data"])
 ability = WriteFileAbility(permission_checker=checker)
 
 # With human approval Hook
-hook = WriteApprovalHook(checker)
+hook = AccessApprovalHook(checker)
 ability = WriteFileAbility(permission_checker=checker, hooks=[hook])
 
 agent.register_ability(ability)
@@ -511,15 +511,17 @@ File system path permission checker, providing unified permission control for al
 
 ```mermaid
 flowchart TD
-    A[Request access path] --> B{Has whitelist/workspace?}
+    A[Request access path] --> D{Path in denied_paths?}
+    D -->|Yes| K[Hard deny]
+    D -->|No| B{Has whitelist/workspace?}
     B -->|No| C{Require approval?}
-    C -->|No| D[Default allow]
+    C -->|No| J[Default allow]
     C -->|Yes| E[Require human approval]
     B -->|Yes| F{Path in whitelist/workspace?}
     F -->|Yes| G[Auto approve]
     F -->|No| H{Require approval?}
     H -->|Yes| I[Require human approval]
-    H -->|No| J[Deny]
+    H -->|No| J2[Deny]
 ```
 
 ### Usage
@@ -527,22 +529,29 @@ flowchart TD
 ```python
 from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
 
-# Whitelist mode
+# Whitelist + deny list mode
 checker = FSPermissionChecker(
     allowed_paths=["/tmp/data", "/home/user/docs"],
     workspace_root="/home/user/project",
+    denied_paths=["/home/user/project/secrets"],
 )
 
-# Read permission check
-allowed, reason = checker.check_read_path("/tmp/data/file.txt")
-# → (True, "")
-
-# Write permission check
-allowed, approval = checker.check_write_path("/tmp/data/output.txt")
+# Unified access check
+allowed, status = checker.check_access("/tmp/data/file.txt", operation="read")
 # → (True, None)  — Auto-approved
 
-allowed, approval = checker.check_write_path("/etc/config.ini")
+# Compatible interface
+allowed, status = checker.check_read_path("/tmp/data/file.txt")
+# → (True, None)  — Auto-approved
+
+allowed, status = checker.check_write_path("/tmp/data/output.txt")
+# → (True, None)  — Auto-approved
+
+allowed, status = checker.check_write_path("/etc/config.ini")
 # → (True, "pending")  — Requires human approval
+
+allowed, status = checker.check_read_path("/home/user/project/secrets/key.pem")
+# → (False, "Permission denied: ... is in denied paths")  — Deny list blocks
 ```
 
 ### Constructor Parameters
@@ -550,44 +559,45 @@ allowed, approval = checker.check_write_path("/etc/config.ini")
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `allowed_paths` | `list[str] \| None` | `None` | Allowed paths whitelist |
-| `workspace_root` | `str \| None` | `None` | Workspace root directory |
+| `workspace_root` | `str \| None` | `None` | Workspace root directory (symlinks resolved) |
+| `denied_paths` | `list[str] \| None` | `None` | Denied paths blacklist (takes priority over whitelist) |
 | `require_approval` | `bool` | `True` | Whether to require human approval for paths not in whitelist |
 
-## WriteApprovalHook
+## AccessApprovalHook
 
-**File**: [`fs_permissions.py`](../src/ghrah/abilities/builtin/fs_permissions.py:144)
+**File**: [`fs_permissions.py`](../src/ghrah/abilities/builtin/fs_permissions.py)
 
-Human approval Hook for write operations, intercepting write Abilities at the `PRE_EXECUTE` trigger point.
+Human approval Hook for access operations, intercepting read and write Abilities at the `PRE_EXECUTE` trigger point. `WriteApprovalHook` is a backward-compatible alias.
 
 ### Covered Abilities
 
-- `write_file`
-- `edit_file`
-- `move_file`
-- `delete_file`
+- Read: `read_file`, `list_directory`
+- Write: `write_file`, `edit_file`, `move_file`, `delete_file`
 
 ### Usage
 
 ```python
-from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, WriteApprovalHook
+from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, AccessApprovalHook
 
 checker = FSPermissionChecker(
     allowed_paths=["/tmp/workspace"],
+    denied_paths=["/tmp/workspace/secrets"],
     require_approval=True,
 )
-hook = WriteApprovalHook(checker)
+hook = AccessApprovalHook(checker)
 
-# Attach Hook to write Abilities
+# Attach Hook to read/write Abilities
 ability = WriteFileAbility(permission_checker=checker, hooks=[hook])
 ```
 
 ### Approval Flow
 
 1. Extract target path from `tool_args`
-2. Check permissions via `FSPermissionChecker.check_write_path()`
-3. If auto-approved → allow
-4. If human approval required → return pause signal
-5. If denied → return stop signal
+2. Determine operation type based on Ability (read/write)
+3. Check permissions via `FSPermissionChecker.check_access()`
+4. If auto-approved → allow
+5. If human approval required → return pause signal
+6. If denied → return stop signal
 
 ## Cluster Communication Abilities
 
@@ -804,7 +814,7 @@ agent.register_ability(ListDirectoryAbility(permission_checker=checker))
 
 ```python
 checker = FSPermissionChecker(allowed_paths=["/tmp/workspace"], require_approval=True)
-approval_hook = WriteApprovalHook(checker)
+approval_hook = AccessApprovalHook(checker)
 
 agent.register_ability(ConversationAbility())
 agent.register_ability(EndTaskAbility())
@@ -855,5 +865,5 @@ agent.register_ability(SpawnAgentAbility())
 ## Next Steps
 
 - [Ability System](ability-system_en.md) — Learn how to create custom Abilities
-- [Hook Mechanism](hook-mechanism_en.md) — Deep dive into WriteApprovalHook and other built-in Hooks
+- [Hook Mechanism](hook-mechanism_en.md) — Deep dive into AccessApprovalHook and other built-in Hooks
 - [Configuration Reference](configuration_en.md) — View FSPermissionChecker configuration options

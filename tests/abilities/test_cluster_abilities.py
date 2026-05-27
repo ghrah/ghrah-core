@@ -11,8 +11,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from ghrah.abilities.base import ActionOutcome
 from ghrah.abilities.builtin.cluster import (
     BroadcastMessageAbility,

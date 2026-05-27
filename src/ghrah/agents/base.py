@@ -168,6 +168,7 @@ class ActorAgent:
                 agent_name=config.name,
                 hooks=self._all_hooks,
                 event_publisher=self._event_publisher,
+                workspace_root=config.workspace_root,
             )
 
         # ────── 分布式模式：由 SupervisorActor 后置注入 ──────

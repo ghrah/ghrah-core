@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -132,13 +133,13 @@ class ListDirectoryAbility(Ability):
         logger.debug(f"ListDirectoryAbility: listing {dir_path} (recursive={recursive})")
 
         try:
-            if not os.path.exists(dir_path):
+            if not Path(dir_path).exists():
                 return ActionResult(
                     outcome=ActionOutcome.FAILURE,
                     data={"error": f"Directory not found: {dir_path}"},
                 )
 
-            if not os.path.isdir(dir_path):
+            if not Path(dir_path).is_dir():
                 return ActionResult(
                     outcome=ActionOutcome.FAILURE,
                     data={"error": f"Not a directory: {dir_path}"},
@@ -180,20 +181,22 @@ class ListDirectoryAbility(Ability):
         entries: list[dict[str, Any]] = []
 
         if recursive:
+            dir_path_obj = Path(dir_path)
             for root, dirs, files in os.walk(dir_path):
+                root_path = Path(root)
                 for d in sorted(dirs):
-                    full_path = os.path.join(root, d)
+                    full_path = root_path / d
                     entries.append(
                         {
                             "name": d,
                             "type": "directory",
-                            "path": os.path.relpath(full_path, dir_path),
+                            "path": str(full_path.relative_to(dir_path_obj)),
                         }
                     )
                 for f in sorted(files):
-                    full_path = os.path.join(root, f)
+                    full_path = root_path / f
                     try:
-                        size = os.path.getsize(full_path)
+                        size = full_path.stat().st_size
                     except OSError:
                         size = -1
                     entries.append(
@@ -201,20 +204,19 @@ class ListDirectoryAbility(Ability):
                             "name": f,
                             "type": "file",
                             "size": size,
-                            "path": os.path.relpath(full_path, dir_path),
+                            "path": str(full_path.relative_to(dir_path_obj)),
                         }
                     )
         else:
-            for entry in sorted(os.listdir(dir_path)):
-                full_path = os.path.join(dir_path, entry)
-                is_dir = os.path.isdir(full_path)
+            for entry_path in sorted(Path(dir_path).iterdir()):
+                is_dir = entry_path.is_dir()
                 entry_info: dict[str, Any] = {
-                    "name": entry,
+                    "name": entry_path.name,
                     "type": "directory" if is_dir else "file",
                 }
                 if not is_dir:
                     try:
-                        entry_info["size"] = os.path.getsize(full_path)
+                        entry_info["size"] = entry_path.stat().st_size
                     except OSError:
                         entry_info["size"] = -1
                 entries.append(entry_info)

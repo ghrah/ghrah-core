@@ -121,26 +121,33 @@ class ConversationDoneHook(Hook):
         return HookResult.stop()  # 纯对话只需一次 LLM 调用
 ```
 
-### WriteApprovalHook
+### AccessApprovalHook
 
-[`WriteApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) 在写入操作前请求人工批准（HITL）：
+[`AccessApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) 在读写操作前请求人工批准（HITL），覆盖 `read_file`、`list_directory`、`write_file`、`edit_file`、`move_file`、`delete_file`：
 
 ```python
-class WriteApprovalHook(Hook):
-    """写入操作人工批准 Hook"""
+class AccessApprovalHook(Hook):
+    """访问操作人工批准 Hook"""
     hook_point = HookPoint.PRE_EXECUTE
     
+    WRITE_ABILITIES = {"write_file", "edit_file", "move_file", "delete_file"}
+    READ_ABILITIES = {"read_file", "list_directory"}
+    
     async def should_trigger(self, context: AbilityExecutionContext) -> bool:
-        # 只对写入类 Ability 触发
-        return context.current_ability_name in ("write_file", "edit_file")
+        # 对读写类 Ability 触发检查
+        name = context.current_ability_name
+        return name in self.WRITE_ABILITIES or name in self.READ_ABILITIES
     
     async def execute(self, context, result) -> HookResult:
         # 请求人工批准
-        approved = input(f"允许写入 {context.tool_args.get('path')}? [y/N] ")
-        if approved.lower() != "y":
-            return HookResult.stop()
-        return HookResult.continue_()
+        tool_args = context.tool_args or context.accumulated_data.get("tool_args", {})
+        target_path = tool_args.get("file_path") or tool_args.get("dir_path")
+        operation = "write" if context.current_ability_name in self.WRITE_ABILITIES else "read"
+        allowed, status = self._checker.check_access(target_path, operation)
+        ...
 ```
+
+`WriteApprovalHook` 是 `AccessApprovalHook` 的向后兼容别名。
 
 ### FSPermissionHook
 

@@ -9,8 +9,8 @@ ghrah 提供了一组内置 Ability，覆盖常见的对话、文件系统操作
 | [`ConversationAbility`](../src/ghrah/abilities/builtin/conversation.py) | `conversation` | 无 | `ConversationDoneHook` | 纯 LLM 对话 |
 | [`EndTaskAbility`](../src/ghrah/abilities/builtin/end_task.py) | `end_task` | mode=toolcall 时有 | 无 | 终止循环 |
 | [`ReadFileAbility`](../src/ghrah/abilities/builtin/read_file.py) | `read_file` | ✅ | FSPermissionHook | 文件读取 |
-| [`WriteFileAbility`](../src/ghrah/abilities/builtin/write_file.py) | `write_file` | ✅ | FSPermissionHook + WriteApprovalHook | 文件写入 |
-| [`EditFileAbility`](../src/ghrah/abilities/builtin/edit_file.py) | `edit_file` | ✅ | FSPermissionHook + WriteApprovalHook | 文件编辑 |
+| [`WriteFileAbility`](../src/ghrah/abilities/builtin/write_file.py) | `write_file` | ✅ | FSPermissionHook + AccessApprovalHook | 文件写入 |
+| [`EditFileAbility`](../src/ghrah/abilities/builtin/edit_file.py) | `edit_file` | ✅ | FSPermissionHook + AccessApprovalHook | 文件编辑 |
 | [`MoveFileAbility`](../src/ghrah/abilities/builtin/move_file.py) | `move_file` | ✅ | FSPermissionHook | 文件移动/重命名 |
 | [`DeleteFileAbility`](../src/ghrah/abilities/builtin/delete_file.py) | `delete_file` | ✅ | FSPermissionHook | 文件删除 |
 | [`ListDirectoryAbility`](../src/ghrah/abilities/builtin/list_directory.py) | `list_directory` | ✅ | FSPermissionHook | 目录列表 |
@@ -158,7 +158,7 @@ agent.register_ability(ability)
 
 ```python
 from ghrah.abilities.builtin.write_file import WriteFileAbility
-from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, WriteApprovalHook
+from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, AccessApprovalHook
 
 # 无权限限制
 ability = WriteFileAbility()
@@ -168,7 +168,7 @@ checker = FSPermissionChecker(allowed_paths=["/tmp/data"])
 ability = WriteFileAbility(permission_checker=checker)
 
 # 带人工批准 Hook
-hook = WriteApprovalHook(checker)
+hook = AccessApprovalHook(checker)
 ability = WriteFileAbility(permission_checker=checker, hooks=[hook])
 
 agent.register_ability(ability)
@@ -511,15 +511,17 @@ agent.register_ability(ability)
 
 ```mermaid
 flowchart TD
-    A[请求访问路径] --> B{有白名单/工作路径?}
+    A[请求访问路径] --> D{路径在 denied_paths?}
+    D -->|是| K[硬性拒绝]
+    D -->|否| B{有白名单/工作路径?}
     B -->|否| C{需要批准?}
-    C -->|否| D[默认允许]
+    C -->|否| J[默认允许]
     C -->|是| E[需要人工批准]
     B -->|是| F{路径在白名单/工作路径下?}
     F -->|是| G[自动批准]
     F -->|否| H{需要批准?}
     H -->|是| I[需要人工批准]
-    H -->|否| J[拒绝]
+    H -->|否| J2[拒绝]
 ```
 
 ### 用法
@@ -527,22 +529,29 @@ flowchart TD
 ```python
 from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
 
-# 白名单模式
+# 白名单 + 黑名单模式
 checker = FSPermissionChecker(
     allowed_paths=["/tmp/data", "/home/user/docs"],
     workspace_root="/home/user/project",
+    denied_paths=["/home/user/project/secrets"],
 )
 
-# 读取权限检查
-allowed, reason = checker.check_read_path("/tmp/data/file.txt")
-# → (True, "")
-
-# 写入权限检查
-allowed, approval = checker.check_write_path("/tmp/data/output.txt")
+# 统一访问检查
+allowed, status = checker.check_access("/tmp/data/file.txt", operation="read")
 # → (True, None)  — 自动批准
 
-allowed, approval = checker.check_write_path("/etc/config.ini")
+# 兼容接口
+allowed, status = checker.check_read_path("/tmp/data/file.txt")
+# → (True, None)  — 自动批准
+
+allowed, status = checker.check_write_path("/tmp/data/output.txt")
+# → (True, None)  — 自动批准
+
+allowed, status = checker.check_write_path("/etc/config.ini")
 # → (True, "pending")  — 需要人工批准
+
+allowed, status = checker.check_read_path("/home/user/project/secrets/key.pem")
+# → (False, "Permission denied: ... is in denied paths")  — 黑名单拒绝
 ```
 
 ### 构造参数
@@ -550,44 +559,45 @@ allowed, approval = checker.check_write_path("/etc/config.ini")
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `allowed_paths` | `list[str] \| None` | `None` | 允许访问的路径白名单 |
-| `workspace_root` | `str \| None` | `None` | 工作路径根目录 |
+| `workspace_root` | `str \| None` | `None` | 工作路径根目录（解析符号链接） |
+| `denied_paths` | `list[str] \| None` | `None` | 拒绝访问的路径黑名单（优先于白名单） |
 | `require_approval` | `bool` | `True` | 不在白名单时是否需要人工批准 |
 
-## WriteApprovalHook
+## AccessApprovalHook
 
-**文件**：[`fs_permissions.py`](../src/ghrah/abilities/builtin/fs_permissions.py:144)
+**文件**：[`fs_permissions.py`](../src/ghrah/abilities/builtin/fs_permissions.py)
 
-写入操作的人工批准 Hook，在 `PRE_EXECUTE` 触发点拦截写入类 Ability。
+访问操作的人工批准 Hook，在 `PRE_EXECUTE` 触发点拦截读写类 Ability。`WriteApprovalHook` 是其向后兼容别名。
 
 ### 覆盖的 Ability
 
-- `write_file`
-- `edit_file`
-- `move_file`
-- `delete_file`
+- 读取类：`read_file`、`list_directory`
+- 写入类：`write_file`、`edit_file`、`move_file`、`delete_file`
 
 ### 用法
 
 ```python
-from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, WriteApprovalHook
+from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker, AccessApprovalHook
 
 checker = FSPermissionChecker(
     allowed_paths=["/tmp/workspace"],
+    denied_paths=["/tmp/workspace/secrets"],
     require_approval=True,
 )
-hook = WriteApprovalHook(checker)
+hook = AccessApprovalHook(checker)
 
-# 将 Hook 附加到写入类 Ability
+# 将 Hook 附加到读写类 Ability
 ability = WriteFileAbility(permission_checker=checker, hooks=[hook])
 ```
 
 ### 审批流程
 
 1. 从 `tool_args` 中提取目标路径
-2. 通过 `FSPermissionChecker.check_write_path()` 检查权限
-3. 如果自动批准 → 放行
-4. 如果需要人工批准 → 返回暂停信号
-5. 如果拒绝 → 返回停止信号
+2. 根据 Ability 类型判断操作类型（读/写）
+3. 通过 `FSPermissionChecker.check_access()` 检查权限
+4. 如果自动批准 → 放行
+5. 如果需要人工批准 → 返回暂停信号
+6. 如果拒绝 → 返回停止信号
 
 ## 集群通信 Ability
 
@@ -804,7 +814,7 @@ agent.register_ability(ListDirectoryAbility(permission_checker=checker))
 
 ```python
 checker = FSPermissionChecker(allowed_paths=["/tmp/workspace"], require_approval=True)
-approval_hook = WriteApprovalHook(checker)
+approval_hook = AccessApprovalHook(checker)
 
 agent.register_ability(ConversationAbility())
 agent.register_ability(EndTaskAbility())
@@ -855,5 +865,5 @@ agent.register_ability(SpawnAgentAbility())
 ## 下一步
 
 - [Ability 系统](ability-system.md) — 了解如何自定义 Ability
-- [Hook 机制](hook-mechanism.md) — 深入了解 WriteApprovalHook 等内置 Hook
+- [Hook 机制](hook-mechanism.md) — 深入了解 AccessApprovalHook 等内置 Hook
 - [配置参考](configuration.md) — 查看 FSPermissionChecker 的配置选项

@@ -196,6 +196,7 @@ class AgentConfig:
         resources: 资源配置，如 {"CPU": 2, "GPU": 1}
         window: 窗口管理配置，None 表示不启用窗口管理
         context: ContextManager 配置，None 表示使用默认值
+        workspace_root: 工作区根目录，用于将相对路径解析到沙盒内（None 表示不限制）
     """
 
     name: str
@@ -208,6 +209,7 @@ class AgentConfig:
     window: WindowConfig | None = None
     context: ContextConfig | None = None
     model_overrides: ModelOverrides | None = None
+    workspace_root: str | None = None
 
     @property
     def effective_agent_config_name(self) -> str:

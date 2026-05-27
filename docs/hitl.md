@@ -82,7 +82,7 @@ Core → EventBus → Subject（确认/记录）→ Observer（渲染/审批）
 sequenceDiagram
     participant Agent as ActorAgent
     participant LAE as LocalAbilityExecutor
-    participant Hook as WriteApprovalHook
+    participant Hook as AccessApprovalHook
     participant HFS as HITLFutureStore
     participant EP as EventPublisher
     participant Obs as Observer
@@ -125,27 +125,30 @@ sequenceDiagram
     RAE-->>Agent: 继续驱动循环
 ```
 
-## 内置 HITL Hook：WriteApprovalHook
+## 内置 HITL Hook：AccessApprovalHook
 
-[`WriteApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) 是内置的写操作审批 Hook：
+[`AccessApprovalHook`](../src/ghrah/abilities/builtin/fs_permissions.py) 是内置的统一访问审批 Hook，覆盖读和写操作：
 
 ```python
-from ghrah.abilities.builtin import WriteFileAbility, FSPermissionChecker
+from ghrah.abilities.builtin import ReadFileAbility, WriteFileAbility, FSPermissionChecker
 
-# 配置写入审批：不在白名单中的路径需要 HITL 审批
 permission_checker = FSPermissionChecker(
-    allowed_dirs=["/tmp/workspace"],  # 白名单目录
-    require_approval=True,            # 非白名单路径需要审批
+    denied_paths=["/etc/shadow", "/etc/passwd"],  # 优先：黑名单路径直接拒绝
+    allowed_paths=["/tmp/workspace"],              # 白名单目录：直接通过
+    workspace_root="/home/user/project",           # 工作区根目录
 )
 
 ability = WriteFileAbility(permission_checker=permission_checker)
 ```
 
+`FSPermissionChecker` 提供 `check_access(path, operation)` 方法统一处理读（`operation='read'`）写（`operation='write'`）权限检查。
+
 ### 审批逻辑
 
-1. 写入路径在 `allowed_dirs` 白名单中 → 直接通过
-2. 写入路径不在白名单中且 `require_approval=True` → 触发 HITL 审批
-3. 写入路径不在白名单中且 `require_approval=False` → 拒绝
+1. 路径在 `denied_paths` 黑名单中 → 直接拒绝（优先级最高）
+2. 路径在 `allowed_paths` 白名单或 `workspace_root` 下 → 自动通过
+3. 路径不在白名单中且 `require_approval=True` → 触发 HITL 审批
+4. 路径不在白名单中且 `require_approval=False` → 直接拒绝
 
 ## 自定义 HITL Hook
 
