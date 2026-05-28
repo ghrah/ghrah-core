@@ -9,6 +9,7 @@ SupervisorActor 是整个多 Agent 系统的中心编排者：
 - 管理 Agent 的创建和销毁
 - 提供消息路由和广播的入口
 - 支持显式 Ability 注册，默认注册基础 Ability 组合
+- 支持 Session 管理（创建、切换、列表、归档、删除）
 """
 
 from __future__ import annotations
@@ -366,6 +367,107 @@ class SupervisorActor:
         """
         info = self._registry.get_info(agent_name)
         return info.actor_handle
+
+    async def create_session(
+        self,
+        agent_name: str,
+        session_name: str | None = None,
+        from_node_id: str | None = None,
+        system_prompt: str | None = None,
+        session_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """为指定 Agent 创建新 session。
+
+        Args:
+            agent_name: Agent 名称
+            session_name: 可选的 session 名称
+            from_node_id: 可选的 fork 起始节点 ID
+            system_prompt: 可选的系统提示词
+            session_metadata: 可选的元数据
+
+        Returns:
+            新 session 信息字典
+
+        Raises:
+            AgentNotFoundError: Agent 未注册
+        """
+        handle = await self.get_agent_handle(agent_name)
+        session = await handle.create_session(
+            from_node_id=from_node_id,
+            system_prompt=system_prompt,
+            session_name=session_name,
+            session_metadata=session_metadata,
+        )
+        return {
+            "session_id": session.session_id,
+            "agent_name": session.agent_name,
+            "branch_name": session.branch_name,
+            "parent_session_id": session.parent_session_id,
+            "fork_point_node_id": session.parent_node_id,
+            "created_at": session.created_at.isoformat() if session.created_at else "",
+        }
+
+    async def switch_session(self, agent_name: str, session_id: str) -> dict[str, Any]:
+        """切换指定 Agent 的活跃 session。
+
+        Args:
+            agent_name: Agent 名称
+            session_id: 要切换到的 session ID
+
+        Returns:
+            切换后的 session 信息字典
+
+        Raises:
+            AgentNotFoundError: Agent 未注册
+        """
+        handle = await self.get_agent_handle(agent_name)
+        await handle.switch_session(session_id)
+        sessions = handle.list_sessions()
+        for s in sessions:
+            if s["session_id"] == session_id:
+                return s
+        return {"session_id": session_id, "agent_name": agent_name}
+
+    async def list_sessions(self, agent_name: str) -> list[dict[str, Any]]:
+        """列出指定 Agent 的所有 session。
+
+        Args:
+            agent_name: Agent 名称
+
+        Returns:
+            session 信息字典列表
+
+        Raises:
+            AgentNotFoundError: Agent 未注册
+        """
+        handle = await self.get_agent_handle(agent_name)
+        return handle.list_sessions()
+
+    async def archive_session(self, agent_name: str, session_id: str) -> None:
+        """归档指定 Agent 的 session。
+
+        Args:
+            agent_name: Agent 名称
+            session_id: 要归档的 session ID
+
+        Raises:
+            AgentNotFoundError: Agent 未注册
+        """
+        handle = await self.get_agent_handle(agent_name)
+        await handle.archive_session(session_id)
+
+    async def delete_session(self, agent_name: str, session_id: str) -> None:
+        """删除指定 Agent 的 session。不能删除当前活跃的 session。
+
+        Args:
+            agent_name: Agent 名称
+            session_id: 要删除的 session ID
+
+        Raises:
+            AgentNotFoundError: Agent 未注册
+        """
+        handle = await self.get_agent_handle(agent_name)
+        await handle.delete_session(session_id)
 
     async def health_check(self) -> dict[str, bool]:
         """检查所有 Agent 的健康状态。

@@ -24,9 +24,10 @@
 
 集群通信 Ability：
 - QueryAgentsAbility: 查询集群中已注册的 Agent 信息
-- SendMessageAbility: 向指定 Agent 发送消息
+- SendMessageAbility: 向指定 Agent 发送消息（支持同步/异步模式）
 - BroadcastMessageAbility: 向所有 Agent 广播消息
 - SpawnAgentAbility: 动态创建平级 Agent
+- TerminateAgentAbility: 终止集群中的 Agent
 
 权限模块：
 - FSPermissionChecker: 文件系统路径权限检查器
@@ -37,12 +38,7 @@
 """
 
 from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
-from ghrah.abilities.builtin.cluster import (
-    BroadcastMessageAbility,
-    QueryAgentsAbility,
-    SendMessageAbility,
-    SpawnAgentAbility,
-)
+from ghrah.abilities.builtin.broadcast_message import BroadcastMessageAbility
 from ghrah.abilities.builtin.command_safety import (
     CommandApprovalHook,
     CommandSafetyCategory,
@@ -63,7 +59,11 @@ from ghrah.abilities.builtin.fs_permissions import (
 )
 from ghrah.abilities.builtin.list_directory import ListDirectoryAbility
 from ghrah.abilities.builtin.move_file import MoveFileAbility
+from ghrah.abilities.builtin.query_agents import QueryAgentsAbility
 from ghrah.abilities.builtin.read_file import ReadFileAbility
+from ghrah.abilities.builtin.send_message import SendMessageAbility
+from ghrah.abilities.builtin.spawn_agent import SpawnAgentAbility
+from ghrah.abilities.builtin.terminate_agent import TerminateAgentAbility
 from ghrah.abilities.builtin.write_file import WriteFileAbility
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.executor import AbilityExecutor, LocalAbilityExecutor, RemoteAbilityExecutor
@@ -90,6 +90,7 @@ def _register_builtin_abilities() -> None:
     AbilityRegistry.register("send_message", SendMessageAbility)
     AbilityRegistry.register("broadcast_message", BroadcastMessageAbility)
     AbilityRegistry.register("spawn_agent", SpawnAgentAbility)
+    AbilityRegistry.register("terminate_agent", TerminateAgentAbility)
 
 
 # 模块加载时自动注册内置 Ability
@@ -126,6 +127,7 @@ __all__ = [
     "SendMessageAbility",
     "BroadcastMessageAbility",
     "SpawnAgentAbility",
+    "TerminateAgentAbility",
     # 文件系统权限模块
     "FSPermissionChecker",
     "AccessApprovalHook",

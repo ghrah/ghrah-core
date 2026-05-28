@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """集群通信 Ability 测试：QueryAgentsAbility, SendMessageAbility,
-BroadcastMessageAbility, SpawnAgentAbility。
+BroadcastMessageAbility, SpawnAgentAbility, TerminateAgentAbility。
 """
 
 from __future__ import annotations
@@ -12,12 +12,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from ghrah.abilities.base import ActionOutcome
-from ghrah.abilities.builtin.cluster import (
-    BroadcastMessageAbility,
-    QueryAgentsAbility,
-    SendMessageAbility,
-    SpawnAgentAbility,
-)
+from ghrah.abilities.builtin.broadcast_message import BroadcastMessageAbility
+from ghrah.abilities.builtin.query_agents import QueryAgentsAbility
+from ghrah.abilities.builtin.send_message import SendMessageAbility
+from ghrah.abilities.builtin.spawn_agent import SpawnAgentAbility
+from ghrah.abilities.builtin.terminate_agent import TerminateAgentAbility
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.core.config import AgentConfig
 
@@ -147,18 +146,19 @@ class TestSendMessageAbility:
         assert result.outcome == ActionOutcome.FAILURE
         assert "No supervisor" in result.data["error"]
 
-    async def test_execute_success(self) -> None:
+    async def test_execute_success_sync(self) -> None:
         supervisor = _make_supervisor(send_return="done!")
         ctx = _make_context(
             supervisor=supervisor,
             agent_name="agent-a",
-            tool_args={"target": "agent-b", "content": "hello"},
+            tool_args={"target": "agent-b", "content": "hello", "fire_and_forget": False},
         )
         ability = SendMessageAbility()
         result = await ability.execute(ctx)
         assert result.outcome == ActionOutcome.SUCCESS
         assert result.data["response"] == "done!"
         assert result.data["target"] == "agent-b"
+        assert result.data["mode"] == "sync"
         supervisor.send.assert_awaited_once_with(
             target="agent-b", content="hello", sender="agent-a"
         )
@@ -179,12 +179,12 @@ class TestSendMessageAbility:
         assert result.outcome == ActionOutcome.FAILURE
         assert "content is required" in result.data["error"]
 
-    async def test_execute_send_exception(self) -> None:
+    async def test_execute_send_exception_sync(self) -> None:
         supervisor = _make_supervisor()
         supervisor.send = AsyncMock(side_effect=RuntimeError("timeout"))
         ctx = _make_context(
             supervisor=supervisor,
-            tool_args={"target": "agent-b", "content": "hello"},
+            tool_args={"target": "agent-b", "content": "hello", "fire_and_forget": False},
         )
         ability = SendMessageAbility()
         result = await ability.execute(ctx)
@@ -386,6 +386,7 @@ class TestClusterAbilityRegistry:
         assert AbilityRegistry.has("send_message")
         assert AbilityRegistry.has("broadcast_message")
         assert AbilityRegistry.has("spawn_agent")
+        assert AbilityRegistry.has("terminate_agent")
 
     def test_registry_create_query_agents(self) -> None:
         from ghrah.abilities.registry import AbilityRegistry
@@ -410,3 +411,108 @@ class TestClusterAbilityRegistry:
 
         ability = AbilityRegistry.create("spawn_agent")
         assert isinstance(ability, SpawnAgentAbility)
+
+    def test_registry_create_terminate_agent(self) -> None:
+        from ghrah.abilities.registry import AbilityRegistry
+
+        ability = AbilityRegistry.create("terminate_agent")
+        assert isinstance(ability, TerminateAgentAbility)
+
+
+# ── TerminateAgentAbility 测试 ──
+
+
+class TestTerminateAgentAbility:
+    def test_name(self) -> None:
+        ability = TerminateAgentAbility()
+        assert ability.name == "terminate_agent"
+
+    def test_bind_tool(self) -> None:
+        ability = TerminateAgentAbility()
+        schema = ability.bind_tool()
+        assert schema is not None
+        func = schema["function"]
+        assert func["name"] == "terminate_agent"
+        params = func["parameters"]["properties"]
+        assert "agent_name" in params
+        required = func["parameters"].get("required", [])
+        assert "agent_name" in required
+
+    async def test_execute_no_supervisor(self) -> None:
+        ctx = _make_context(
+            supervisor=None,
+            tool_args={"agent_name": "worker-1"},
+        )
+        ability = TerminateAgentAbility()
+        result = await ability.execute(ctx)
+        assert result.outcome == ActionOutcome.FAILURE
+        assert "No supervisor" in result.data["error"]
+
+    async def test_execute_success(self) -> None:
+        supervisor = MagicMock()
+        supervisor.terminate_agent = AsyncMock()
+        ctx = _make_context(
+            supervisor=supervisor,
+            tool_args={"agent_name": "worker-1"},
+        )
+        ability = TerminateAgentAbility()
+        result = await ability.execute(ctx)
+        assert result.outcome == ActionOutcome.SUCCESS
+        assert result.data["agent_name"] == "worker-1"
+        assert result.data["status"] == "terminated"
+        supervisor.terminate_agent.assert_awaited_once_with("worker-1")
+
+    async def test_execute_missing_agent_name(self) -> None:
+        supervisor = MagicMock()
+        supervisor.terminate_agent = AsyncMock()
+        ctx = _make_context(supervisor=supervisor, tool_args={})
+        ability = TerminateAgentAbility()
+        result = await ability.execute(ctx)
+        assert result.outcome == ActionOutcome.FAILURE
+        assert "agent_name is required" in result.data["error"]
+
+    async def test_execute_terminate_exception(self) -> None:
+        supervisor = MagicMock()
+        supervisor.terminate_agent = AsyncMock(side_effect=RuntimeError("not found"))
+        ctx = _make_context(
+            supervisor=supervisor,
+            tool_args={"agent_name": "ghost"},
+        )
+        ability = TerminateAgentAbility()
+        result = await ability.execute(ctx)
+        assert result.outcome == ActionOutcome.FAILURE
+        assert "not found" in result.data["error"]
+
+
+# ── SendMessageAbility 异步模式测试 ──
+
+
+class TestSendMessageAbilityAsync:
+    async def test_execute_fire_and_forget_default(self) -> None:
+        supervisor = _make_supervisor(send_return="async reply")
+        ctx = _make_context(
+            supervisor=supervisor,
+            agent_name="agent-a",
+            tool_args={"target": "agent-b", "content": "hello", "fire_and_forget": True},
+        )
+        ability = SendMessageAbility()
+        result = await ability.execute(ctx)
+        assert result.outcome == ActionOutcome.SUCCESS
+        assert result.data["mode"] == "async"
+        assert result.data["target"] == "agent-b"
+
+    async def test_execute_sync_mode(self) -> None:
+        supervisor = _make_supervisor(send_return="sync reply")
+        ctx = _make_context(
+            supervisor=supervisor,
+            agent_name="agent-a",
+            tool_args={"target": "agent-b", "content": "hello", "fire_and_forget": False},
+        )
+        ability = SendMessageAbility()
+        result = await ability.execute(ctx)
+        assert result.outcome == ActionOutcome.SUCCESS
+        assert result.data["mode"] == "sync"
+        assert result.data["response"] == "sync reply"
+        supervisor.send.assert_awaited_once_with(
+            target="agent-b", content="hello", sender="agent-a"
+        )
