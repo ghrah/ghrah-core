@@ -25,6 +25,10 @@ __all__ = [
     "ActionChainUpdatedEvent",
     "AgentErrorEvent",
     "AgentResponseEvent",
+    "SessionCreatedEvent",
+    "SessionSwitchedEvent",
+    "SessionArchivedEvent",
+    "SessionDeletedEvent",
 ]
 
 
@@ -36,12 +40,20 @@ class CoreEventType(str, Enum):
     - ACTION_CHAIN_UPDATED ↔ EventType.ACTION_CHAIN_UPDATED
     - AGENT_ERROR ↔ EventType.AGENT_ERROR
     - AGENT_RESPONSE ↔ EventType.AGENT_RESPONSE
+    - SESSION_CREATED ↔ EventType.SESSION_CREATED
+    - SESSION_SWITCHED ↔ EventType.SESSION_SWITCHED
+    - SESSION_ARCHIVED ↔ EventType.SESSION_ARCHIVED
+    - SESSION_DELETED ↔ EventType.SESSION_DELETED
     """
 
     HITL_REQUEST = "hitl_request"
     ACTION_CHAIN_UPDATED = "action_chain_updated"
     AGENT_ERROR = "agent_error"
     AGENT_RESPONSE = "agent_response"
+    SESSION_CREATED = "session_created"
+    SESSION_SWITCHED = "session_switched"
+    SESSION_ARCHIVED = "session_archived"
+    SESSION_DELETED = "session_deleted"
 
 
 @dataclass
@@ -123,3 +135,63 @@ class AgentResponseEvent(CoreEvent):
     content: str = ""
     message_type: str = "result"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SessionCreatedEvent(CoreEvent):
+    """Session 创建事件。
+
+    ContextManager.create_session() 完成后由 ActorAgent 发布。
+
+    Attributes:
+        session_id: 新创建的 Session ID
+        branch_name: Session 对应的分支名
+        parent_session_id: 父 Session ID（None 表示根 session）
+        fork_point_node_id: fork 起始节点 ID
+    """
+
+    event_type: CoreEventType = field(default=CoreEventType.SESSION_CREATED, init=False)
+    session_id: str = ""
+    branch_name: str = ""
+    parent_session_id: str | None = None
+    fork_point_node_id: str | None = None
+
+
+@dataclass
+class SessionSwitchedEvent(CoreEvent):
+    """Session 切换事件。
+
+    ContextManager.switch_session() 完成后由 ActorAgent 发布。
+
+    Attributes:
+        session_id: 切换到的目标 Session ID
+        branch_name: 目标 Session 的分支名
+    """
+
+    event_type: CoreEventType = field(default=CoreEventType.SESSION_SWITCHED, init=False)
+    session_id: str = ""
+    branch_name: str = ""
+
+
+@dataclass
+class SessionArchivedEvent(CoreEvent):
+    """Session 归档事件。
+
+    Attributes:
+        session_id: 被归档的 Session ID
+    """
+
+    event_type: CoreEventType = field(default=CoreEventType.SESSION_ARCHIVED, init=False)
+    session_id: str = ""
+
+
+@dataclass
+class SessionDeletedEvent(CoreEvent):
+    """Session 删除事件。
+
+    Attributes:
+        session_id: 被删除的 Session ID
+    """
+
+    event_type: CoreEventType = field(default=CoreEventType.SESSION_DELETED, init=False)
+    session_id: str = ""

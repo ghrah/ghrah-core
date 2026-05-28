@@ -21,8 +21,14 @@ from ghrah.core.server.event_bus import EventBus
 from ghrah.protocol.types import (
     CORE_COMMANDS,
     PERSIST_COMMANDS,
+    SESSION_COMMANDS,
     CommandType,
     Message,
+    SessionArchivePayload,
+    SessionCreatePayload,
+    SessionDeletePayload,
+    SessionListPayload,
+    SessionSwitchPayload,
     SpawnAgentPayload,
     create_command_result,
     create_error,
@@ -148,7 +154,7 @@ class MessageRouter:
         if message.type not in CORE_COMMANDS and message.type not in (
             CommandType.SUBSCRIBE.value,
             CommandType.UNSUBSCRIBE.value,
-        ):
+        ) and message.type not in SESSION_COMMANDS:
             return create_error(
                 code="UNKNOWN_COMMAND",
                 message=f"Unknown command type: {message.type}",
@@ -181,6 +187,11 @@ class MessageRouter:
             CommandType.SUBSCRIBE: self._handle_subscribe,
             CommandType.UNSUBSCRIBE: self._handle_unsubscribe,
             CommandType.HITL_RESPONSE: self._handle_hitl_response,
+            CommandType.SESSION_CREATE: self._handle_session_create,
+            CommandType.SESSION_SWITCH: self._handle_session_switch,
+            CommandType.SESSION_LIST: self._handle_session_list,
+            CommandType.SESSION_ARCHIVE: self._handle_session_archive,
+            CommandType.SESSION_DELETE: self._handle_session_delete,
         }
 
         handler = handler_map.get(command_type)
@@ -753,6 +764,139 @@ class MessageRouter:
             request_id=request_id,
             success=True,
             data={"resolved": resolved},
+        )
+
+    # ----------------------------------------------------------------
+    # Session 命令处理
+    # ----------------------------------------------------------------
+
+    async def _handle_session_create(
+        self, message: Message, session_id: str, request_id: str
+    ) -> Message:
+        payload = SessionCreatePayload(**message.payload)
+        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        if agent_handle is None:
+            return create_command_result(
+                request_id=request_id,
+                success=False,
+                error=f"Agent '{payload.agent_name}' not found",
+            )
+
+        session = await agent_handle.create_session(
+            from_node_id=payload.from_node_id,
+            system_prompt=payload.system_prompt,
+            session_name=payload.session_name,
+        )
+
+        from ghrah.protocol.types import SessionInfoPayload
+        session_info = SessionInfoPayload(
+            session_id=session.session_id,
+            agent_name=session.agent_name,
+            branch_name=session.branch_name,
+            state="active",
+            parent_session_id=session.parent_session_id,
+            fork_point_node_id=session.parent_node_id,
+            created_at=session.created_at.isoformat() if session.created_at else "",
+            metadata=session.metadata,
+        )
+
+        return create_command_result(
+            request_id=request_id,
+            success=True,
+            data=session_info.model_dump(),
+        )
+
+    async def _handle_session_switch(
+        self, message: Message, session_id: str, request_id: str
+    ) -> Message:
+        payload = SessionSwitchPayload(**message.payload)
+        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        if agent_handle is None:
+            return create_command_result(
+                request_id=request_id,
+                success=False,
+                error=f"Agent '{payload.agent_name}' not found",
+            )
+
+        await agent_handle.switch_session(session_id=payload.session_id)
+
+        session = agent_handle._context_manager.get_active_session()
+        from ghrah.protocol.types import SessionInfoPayload
+        session_info = SessionInfoPayload(
+            session_id=session.session_id,
+            agent_name=session.agent_name,
+            branch_name=session.branch_name,
+            state="active",
+            parent_session_id=session.parent_session_id,
+            fork_point_node_id=session.parent_node_id,
+            created_at=session.created_at.isoformat() if session.created_at else "",
+            metadata=session.metadata,
+        )
+
+        return create_command_result(
+            request_id=request_id,
+            success=True,
+            data=session_info.model_dump(),
+        )
+
+    async def _handle_session_list(
+        self, message: Message, session_id: str, request_id: str
+    ) -> Message:
+        payload = SessionListPayload(**message.payload)
+        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        if agent_handle is None:
+            return create_command_result(
+                request_id=request_id,
+                success=False,
+                error=f"Agent '{payload.agent_name}' not found",
+            )
+
+        sessions = agent_handle.list_sessions()
+
+        return create_command_result(
+            request_id=request_id,
+            success=True,
+            data={"sessions": sessions},
+        )
+
+    async def _handle_session_archive(
+        self, message: Message, session_id: str, request_id: str
+    ) -> Message:
+        payload = SessionArchivePayload(**message.payload)
+        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        if agent_handle is None:
+            return create_command_result(
+                request_id=request_id,
+                success=False,
+                error=f"Agent '{payload.agent_name}' not found",
+            )
+
+        await agent_handle.archive_session(session_id=payload.session_id)
+
+        return create_command_result(
+            request_id=request_id,
+            success=True,
+            data={"session_id": payload.session_id, "archived": True},
+        )
+
+    async def _handle_session_delete(
+        self, message: Message, session_id: str, request_id: str
+    ) -> Message:
+        payload = SessionDeletePayload(**message.payload)
+        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        if agent_handle is None:
+            return create_command_result(
+                request_id=request_id,
+                success=False,
+                error=f"Agent '{payload.agent_name}' not found",
+            )
+
+        await agent_handle.delete_session(session_id=payload.session_id)
+
+        return create_command_result(
+            request_id=request_id,
+            success=True,
+            data={"session_id": payload.session_id, "deleted": True},
         )
 
     def cancel_pending_requests(self) -> None:

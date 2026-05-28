@@ -24,6 +24,10 @@ from ghrah.core.events import (
     CoreEvent,
     CoreEventType,
     HITLRequestEvent,
+    SessionArchivedEvent,
+    SessionCreatedEvent,
+    SessionDeletedEvent,
+    SessionSwitchedEvent,
 )
 
 
@@ -336,3 +340,208 @@ class TestEventPublisherInterface:
         """测试不能直接实例化抽象 EventPublisher。"""
         with pytest.raises(TypeError):
             EventPublisher()  # type: ignore[abstract]
+
+
+class TestSessionEventDataclasses:
+    """Session 事件数据类测试。"""
+
+    def test_session_created_event(self) -> None:
+        """测试 SessionCreatedEvent。"""
+        event = SessionCreatedEvent(
+            agent_name="test-agent",
+            session_id="sess-123",
+            branch_name="session-1",
+            parent_session_id="sess-000",
+            fork_point_node_id="node-5",
+        )
+        assert event.event_type == CoreEventType.SESSION_CREATED
+        assert event.agent_name == "test-agent"
+        assert event.session_id == "sess-123"
+        assert event.branch_name == "session-1"
+        assert event.parent_session_id == "sess-000"
+        assert event.fork_point_node_id == "node-5"
+
+    def test_session_created_event_defaults(self) -> None:
+        """测试 SessionCreatedEvent 默认值。"""
+        event = SessionCreatedEvent(agent_name="test-agent")
+        assert event.event_type == CoreEventType.SESSION_CREATED
+        assert event.session_id == ""
+        assert event.branch_name == ""
+        assert event.parent_session_id is None
+        assert event.fork_point_node_id is None
+
+    def test_session_switched_event(self) -> None:
+        """测试 SessionSwitchedEvent。"""
+        event = SessionSwitchedEvent(
+            agent_name="test-agent",
+            session_id="sess-456",
+            branch_name="session-2",
+        )
+        assert event.event_type == CoreEventType.SESSION_SWITCHED
+        assert event.session_id == "sess-456"
+        assert event.branch_name == "session-2"
+
+    def test_session_archived_event(self) -> None:
+        """测试 SessionArchivedEvent。"""
+        event = SessionArchivedEvent(
+            agent_name="test-agent",
+            session_id="sess-789",
+        )
+        assert event.event_type == CoreEventType.SESSION_ARCHIVED
+        assert event.session_id == "sess-789"
+
+    def test_session_deleted_event(self) -> None:
+        """测试 SessionDeletedEvent。"""
+        event = SessionDeletedEvent(
+            agent_name="test-agent",
+            session_id="sess-999",
+        )
+        assert event.event_type == CoreEventType.SESSION_DELETED
+        assert event.session_id == "sess-999"
+
+
+class TestSessionEventPublishing:
+    """Session 事件发布测试。"""
+
+    @pytest.mark.asyncio
+    async def test_publish_session_created_via_null_publisher(self) -> None:
+        """测试 NullEventPublisher 发布 SessionCreatedEvent。"""
+        publisher = NullEventPublisher()
+        event = SessionCreatedEvent(
+            agent_name="test-agent",
+            session_id="sess-001",
+            branch_name="branch-1",
+        )
+        await publisher.publish(event)
+
+    @pytest.mark.asyncio
+    async def test_publish_session_created_via_server_publisher(self) -> None:
+        """测试 ServerEventPublisher 发布 SessionCreatedEvent。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionCreatedEvent(
+            agent_name="test-agent",
+            session_id="sess-001",
+            branch_name="branch-1",
+            parent_session_id="sess-000",
+            fork_point_node_id="node-5",
+        )
+
+        await publisher.publish(event)
+        assert len(event_bus.published_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_publish_session_switched_via_server_publisher(self) -> None:
+        """测试 ServerEventPublisher 发布 SessionSwitchedEvent。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionSwitchedEvent(
+            agent_name="test-agent",
+            session_id="sess-002",
+            branch_name="branch-2",
+        )
+
+        await publisher.publish(event)
+        assert len(event_bus.published_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_publish_session_archived_via_server_publisher(self) -> None:
+        """测试 ServerEventPublisher 发布 SessionArchivedEvent。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionArchivedEvent(
+            agent_name="test-agent",
+            session_id="sess-001",
+        )
+
+        await publisher.publish(event)
+        assert len(event_bus.published_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_publish_session_deleted_via_server_publisher(self) -> None:
+        """测试 ServerEventPublisher 发布 SessionDeletedEvent。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionDeletedEvent(
+            agent_name="test-agent",
+            session_id="sess-001",
+        )
+
+        await publisher.publish(event)
+        assert len(event_bus.published_events) == 1
+
+    def test_create_event_message_session_created(self) -> None:
+        """测试 _create_event_message 生成 SessionCreated 消息格式。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionCreatedEvent(
+            agent_name="test-agent",
+            session_id="sess-001",
+            branch_name="branch-1",
+            parent_session_id="sess-000",
+            fork_point_node_id="node-5",
+        )
+
+        message = publisher._create_event_message(event)
+
+        assert message["type"] == "session_created"
+        assert message["payload"]["agent_name"] == "test-agent"
+        assert message["payload"]["session_id"] == "sess-001"
+        assert message["payload"]["branch_name"] == "branch-1"
+        assert message["payload"]["parent_session_id"] == "sess-000"
+        assert message["payload"]["fork_point_node_id"] == "node-5"
+
+    def test_create_event_message_session_switched(self) -> None:
+        """测试 _create_event_message 生成 SessionSwitched 消息格式。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionSwitchedEvent(
+            agent_name="test-agent",
+            session_id="sess-002",
+            branch_name="branch-2",
+        )
+
+        message = publisher._create_event_message(event)
+
+        assert message["type"] == "session_switched"
+        assert message["payload"]["agent_name"] == "test-agent"
+        assert message["payload"]["session_id"] == "sess-002"
+        assert message["payload"]["branch_name"] == "branch-2"
+
+    def test_create_event_message_session_archived(self) -> None:
+        """测试 _create_event_message 生成 SessionArchived 消息格式。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionArchivedEvent(
+            agent_name="test-agent",
+            session_id="sess-001",
+        )
+
+        message = publisher._create_event_message(event)
+
+        assert message["type"] == "session_archived"
+        assert message["payload"]["agent_name"] == "test-agent"
+        assert message["payload"]["session_id"] == "sess-001"
+
+    def test_create_event_message_session_deleted(self) -> None:
+        """测试 _create_event_message 生成 SessionDeleted 消息格式。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        event = SessionDeletedEvent(
+            agent_name="test-agent",
+            session_id="sess-001",
+        )
+
+        message = publisher._create_event_message(event)
+
+        assert message["type"] == "session_deleted"
+        assert message["payload"]["agent_name"] == "test-agent"
+        assert message["payload"]["session_id"] == "sess-001"

@@ -26,6 +26,10 @@ from ghrah.core.events import (
     CoreEvent,
     CoreEventType,
     HITLRequestEvent,
+    SessionArchivedEvent,
+    SessionCreatedEvent,
+    SessionDeletedEvent,
+    SessionSwitchedEvent,
 )
 from ghrah.protocol.types import Message
 
@@ -123,6 +127,10 @@ class ServerEventPublisher(EventPublisher):
             CoreEventType.ACTION_CHAIN_UPDATED: "action_chain_updated",
             CoreEventType.AGENT_ERROR: "agent_error",
             CoreEventType.AGENT_RESPONSE: "agent_response",
+            CoreEventType.SESSION_CREATED: "session_created",
+            CoreEventType.SESSION_SWITCHED: "session_switched",
+            CoreEventType.SESSION_ARCHIVED: "session_archived",
+            CoreEventType.SESSION_DELETED: "session_deleted",
         }
 
         payload: dict = {
@@ -156,6 +164,34 @@ class ServerEventPublisher(EventPublisher):
                     "content": event.content,
                     "message_type": event.message_type,
                     "metadata": event.metadata,
+                }
+            )
+        elif isinstance(event, SessionCreatedEvent):
+            payload.update(
+                {
+                    "session_id": event.session_id,
+                    "branch_name": event.branch_name,
+                    "parent_session_id": event.parent_session_id,
+                    "fork_point_node_id": event.fork_point_node_id,
+                }
+            )
+        elif isinstance(event, SessionSwitchedEvent):
+            payload.update(
+                {
+                    "session_id": event.session_id,
+                    "branch_name": event.branch_name,
+                }
+            )
+        elif isinstance(event, SessionArchivedEvent):
+            payload.update(
+                {
+                    "session_id": event.session_id,
+                }
+            )
+        elif isinstance(event, SessionDeletedEvent):
+            payload.update(
+                {
+                    "session_id": event.session_id,
                 }
             )
 

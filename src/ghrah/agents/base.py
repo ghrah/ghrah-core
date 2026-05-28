@@ -49,6 +49,7 @@ from ghrah.chat.format import ChatFormat, LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.context.manager import ContextManager
 from ghrah.context.persistence.serialization import serialize_node
+from ghrah.context.session import Session
 from ghrah.context.window import WindowManager
 from ghrah.core.config import AgentConfig, WindowConfig
 from ghrah.core.event_publisher import (
@@ -60,6 +61,10 @@ from ghrah.core.events import (
     ActionChainUpdatedEvent,
     AgentErrorEvent,
     AgentResponseEvent,
+    SessionArchivedEvent,
+    SessionCreatedEvent,
+    SessionDeletedEvent,
+    SessionSwitchedEvent,
 )
 from ghrah.core.exceptions import (
     AbilityNotFoundError,
@@ -1061,7 +1066,170 @@ class ActorAgent:
         return reply
 
     # ----------------------------------------------------------------
-    # 公共 API
+    # Session 管理
+    # ----------------------------------------------------------------
+
+    async def create_session(
+        self,
+        from_node_id: str | None = None,
+        system_prompt: str | None = None,
+        session_name: str | None = None,
+        session_metadata: dict[str, Any] | None = None,
+    ) -> Session:
+        """创建新 session 并发布事件。
+
+        委托给 ContextManager.create_session() 完成实际创建，
+        然后发布 SessionCreatedEvent。
+
+        Args:
+            from_node_id: fork 起始节点 ID
+            system_prompt: 新 session 的系统提示词
+            session_name: 人类可读的分支名
+            session_metadata: 扩展元数据
+
+        Returns:
+            新创建的 Session 实例
+        """
+        session = self._context_manager.create_session(
+            from_node_id=from_node_id,
+            system_prompt=system_prompt,
+            session_name=session_name,
+            session_metadata=session_metadata,
+        )
+
+        await self._event_publisher.publish(
+            SessionCreatedEvent(
+                agent_name=self.config.name,
+                session_id=session.session_id,
+                branch_name=session.branch_name,
+                parent_session_id=session.parent_session_id,
+                fork_point_node_id=session.parent_node_id,
+            )
+        )
+
+        logger.info(
+            f"ActorAgent[{self.config.name}] created session "
+            f"id={session.session_id} branch={session.branch_name}"
+        )
+        return session
+
+    async def switch_session(self, session_id: str) -> None:
+        """切换到指定 session 并发布事件。
+
+        委托给 ContextManager.switch_session() 完成实际切换，
+        然后发布 SessionSwitchedEvent。
+
+        Args:
+            session_id: 目标 session ID
+
+        Raises:
+            ValueError: session 不存在
+        """
+        self._context_manager.switch_session(session_id)
+
+        session = self._context_manager.get_active_session()
+        await self._event_publisher.publish(
+            SessionSwitchedEvent(
+                agent_name=self.config.name,
+                session_id=session.session_id,
+                branch_name=session.branch_name,
+            )
+        )
+
+        logger.info(
+            f"ActorAgent[{self.config.name}] switched to session "
+            f"id={session.session_id} branch={session.branch_name}"
+        )
+
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """列出所有 session 的信息。
+
+        Returns:
+            Session 信息字典列表，每个包含 session_id、branch_name、state 等
+        """
+        sessions = self._context_manager.list_sessions()
+        result = []
+        for session in sessions:
+            is_active = session.session_id == self._context_manager._active_session_id
+            head_node = self._context_manager._chain.get_branch_head(session.branch_name)
+            result.append({
+                "session_id": session.session_id,
+                "agent_name": session.agent_name,
+                "branch_name": session.branch_name,
+                "state": "active" if is_active else "idle",
+                "head_node_id": head_node.id if head_node else None,
+                "root_node_id": self._context_manager._chain.root.id if self._context_manager._chain.root else None,
+                "parent_session_id": session.parent_session_id,
+                "fork_point_node_id": session.parent_node_id,
+                "created_at": session.created_at.isoformat() if session.created_at else "",
+                "metadata": session.metadata,
+                "message_count": len(self._context_manager._message_store),
+                "iteration_count": self._context_manager.iteration,
+            })
+        return result
+
+    async def archive_session(self, session_id: str) -> None:
+        """归档指定 session 并发布事件。
+
+        将 session 状态标记为 archived。
+
+        Args:
+            session_id: 要归档的 session ID
+
+        Raises:
+            ValueError: session 不存在
+        """
+        sessions = self._context_manager._sessions
+        if session_id not in sessions:
+            raise ValueError(f"Session '{session_id}' not found.")
+
+        session = sessions[session_id]
+        object.__setattr__(session, "metadata", {**session.metadata, "archived": True})
+
+        await self._event_publisher.publish(
+            SessionArchivedEvent(
+                agent_name=self.config.name,
+                session_id=session_id,
+            )
+        )
+
+        logger.info(
+            f"ActorAgent[{self.config.name}] archived session id={session_id}"
+        )
+
+    async def delete_session(self, session_id: str) -> None:
+        """删除指定 session 并发布事件。
+
+        不能删除当前活跃的 session。
+
+        Args:
+            session_id: 要删除的 session ID
+
+        Raises:
+            ValueError: session 不存在或是当前活跃 session
+        """
+        sessions = self._context_manager._sessions
+        if session_id not in sessions:
+            raise ValueError(f"Session '{session_id}' not found.")
+
+        if session_id == self._context_manager._active_session_id:
+            raise ValueError("Cannot delete the active session.")
+
+        session = sessions.pop(session_id)
+
+        await self._event_publisher.publish(
+            SessionDeletedEvent(
+                agent_name=self.config.name,
+                session_id=session_id,
+            )
+        )
+
+        logger.info(
+            f"ActorAgent[{self.config.name}] deleted session id={session_id}"
+        )
+
+    # ----------------------------------------------------------------
+    # 消息 API
     # ----------------------------------------------------------------
 
     async def chat(self, content: str, sender: str = "user") -> str:

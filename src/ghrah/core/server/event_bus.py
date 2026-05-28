@@ -56,6 +56,11 @@ class EventBus:
         EventType.MANIFEST_AGENT_CREATED.value: [ClientType.SUBJECT],
         EventType.MANIFEST_AGENT_UPDATED.value: [ClientType.SUBJECT],
         EventType.MANIFEST_AGENT_DELETED.value: [ClientType.SUBJECT],
+        EventType.SESSION_CREATED.value: [ClientType.SUBJECT],
+        EventType.SESSION_SWITCHED.value: [ClientType.SUBJECT],
+        EventType.SESSION_ARCHIVED.value: [ClientType.SUBJECT],
+        EventType.SESSION_DELETED.value: [ClientType.SUBJECT],
+        EventType.SESSION_LIST_RESULT.value: [ClientType.SUBJECT],
     }
 
     def __init__(self, connection_manager: ConnectionManager) -> None:
@@ -244,5 +249,65 @@ class EventBus:
                 "success": success,
                 "result": result,
                 "error": error,
+            },
+        )
+
+    async def emit_session_created(
+        self,
+        agent_name: str,
+        session_id: str,
+        branch_name: str,
+        parent_session_id: str | None = None,
+        fork_point_node_id: str | None = None,
+    ) -> int:
+        return await self.emit(
+            EventType.SESSION_CREATED,
+            {
+                "agent_name": agent_name,
+                "session_id": session_id,
+                "branch_name": branch_name,
+                "parent_session_id": parent_session_id,
+                "fork_point_node_id": fork_point_node_id,
+            },
+        )
+
+    async def emit_session_switched(
+        self,
+        agent_name: str,
+        session_id: str,
+        branch_name: str,
+    ) -> int:
+        return await self.emit(
+            EventType.SESSION_SWITCHED,
+            {
+                "agent_name": agent_name,
+                "session_id": session_id,
+                "branch_name": branch_name,
+            },
+        )
+
+    async def emit_session_archived(
+        self,
+        agent_name: str,
+        session_id: str,
+    ) -> int:
+        return await self.emit(
+            EventType.SESSION_ARCHIVED,
+            {
+                "agent_name": agent_name,
+                "session_id": session_id,
+            },
+        )
+
+    async def emit_session_deleted(
+        self,
+        agent_name: str,
+        session_id: str,
+    ) -> int:
+        return await self.emit(
+            EventType.SESSION_DELETED,
+            {
+                "agent_name": agent_name,
+                "session_id": session_id,
             },
         )
