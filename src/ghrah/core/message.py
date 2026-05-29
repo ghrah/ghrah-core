@@ -69,6 +69,9 @@ class Message:
         metadata: 扩展元数据（工具参数、错误信息等）
         timestamp: 消息创建时间戳（Unix 时间）
         reply_to: 回复的目标消息 ID（用于请求-响应关联）
+        content_blocks: 结构化内容块列表（序列化后的字典），
+            保留 reasoning/text 等类型区分。
+            为 None 时表示仅有纯文本 content。
     """
 
     sender: str
@@ -79,19 +82,31 @@ class Message:
     metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=lambda: __import__("time").time())
     reply_to: str | None = None
+    content_blocks: list[dict[str, Any]] | None = None
 
     def to_chat_message(self):
         """转换为 ChatMessage。
 
         将内部消息协议转换为 ChatMessage，用于 LLM 上下文管理。
 
+        如果 content_blocks 存在，优先使用结构化块；
+        否则回退到纯文本 TextBlock。
+
         Returns:
             ChatMessage 实例
         """
-        from ghrah.chat.content import ContentBlock, TextBlock
+        from ghrah.chat.content import ContentBlock, TextBlock, block_from_dict
         from ghrah.chat.message import ChatMessage
 
-        blocks: list[ContentBlock] = [TextBlock(text=self.content)]
+        if self.content_blocks:
+            blocks: list[ContentBlock] = []
+            for bd in self.content_blocks:
+                try:
+                    blocks.append(block_from_dict(bd))  # type: ignore[arg-type]
+                except (ValueError, KeyError):
+                    blocks.append(TextBlock(text=str(bd.get("text", bd.get("reasoning", "")))))
+        else:
+            blocks = [TextBlock(text=self.content)]
 
         role_map: dict[MessageType, tuple[str, str | None]] = {
             MessageType.CHAT: ("user", self.sender),
@@ -113,7 +128,10 @@ class Message:
 
     @staticmethod
     def create_reply(
-        original: Message, content: str, msg_type: MessageType | None = None
+        original: Message,
+        content: str,
+        msg_type: MessageType | None = None,
+        content_blocks: list[dict[str, Any]] | None = None,
     ) -> Message:
         """便捷方法：基于原始消息创建回复。
 
@@ -121,6 +139,7 @@ class Message:
             original: 原始消息
             content: 回复内容
             msg_type: 回复消息类型（默认为 RESULT）
+            content_blocks: 结构化内容块（序列化后的字典），保留 reasoning/text 等类型区分
 
         Returns:
             新的回复 Message
@@ -131,6 +150,7 @@ class Message:
             content=content,
             type=msg_type or MessageType.RESULT,
             reply_to=original.id,
+            content_blocks=content_blocks,
         )
 
     def __repr__(self) -> str:

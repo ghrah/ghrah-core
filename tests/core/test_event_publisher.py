@@ -137,8 +137,26 @@ class TestCoreEventDataclasses:
         event = AgentResponseEvent(agent_name="test-agent")
         assert event.event_type == CoreEventType.AGENT_RESPONSE
         assert event.content == ""
+        assert event.content_blocks is None
         assert event.message_type == "result"
         assert event.metadata == {}
+
+    def test_agent_response_event_with_content_blocks(self) -> None:
+        """测试 AgentResponseEvent 带 content_blocks。"""
+        blocks = [
+            {"type": "reasoning", "reasoning": "思考..."},
+            {"type": "text", "text": "回复"},
+        ]
+        event = AgentResponseEvent(
+            agent_name="test-agent",
+            content="回复",
+            content_blocks=blocks,
+            message_type="result",
+        )
+        assert event.content_blocks is not None
+        assert len(event.content_blocks) == 2
+        assert event.content_blocks[0]["type"] == "reasoning"
+        assert event.content_blocks[1]["type"] == "text"
 
 
 class TestNullEventPublisher:
@@ -285,6 +303,32 @@ class TestServerEventPublisher:
         assert "event_type" not in message
         assert message["payload"]["agent_name"] == "test-agent"
         assert message["payload"]["content"] == "Task completed"
+        assert "content_blocks" not in message["payload"]
+
+    def test_create_event_message_agent_response_with_content_blocks(self) -> None:
+        """测试 _create_event_message 含 content_blocks 的 AgentResponse 消息格式。"""
+        event_bus = MockEventBus()
+        publisher = ServerEventPublisher(event_bus)
+
+        blocks = [
+            {"type": "reasoning", "reasoning": "思考过程", "incomplete": False},
+            {"type": "text", "text": "最终回复"},
+        ]
+        event = AgentResponseEvent(
+            agent_name="test-agent",
+            content="最终回复",
+            content_blocks=blocks,
+            message_type="result",
+            metadata={"tokens": 200},
+        )
+
+        message = publisher._create_event_message(event)
+
+        assert message["type"] == "agent_response"
+        assert message["payload"]["content"] == "最终回复"
+        assert message["payload"]["content_blocks"] == blocks
+        assert message["payload"]["content_blocks"][0]["type"] == "reasoning"
+        assert message["payload"]["content_blocks"][1]["type"] == "text"
 
     def test_create_event_message_action_chain_updated(self) -> None:
         """测试 _create_event_message 生成 ActionChainUpdated 消息格式。"""

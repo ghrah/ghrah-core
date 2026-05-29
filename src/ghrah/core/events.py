@@ -126,13 +126,17 @@ class AgentResponseEvent(CoreEvent):
     Agent 完成任务产生最终回复时产生此事件。
 
     Attributes:
-        content: 响应内容
+        content: 响应内容（纯文本，作为向后兼容 fallback）
+        content_blocks: 结构化内容块列表，保留 reasoning/text 等类型区分。
+            每个元素为 block_to_dict() 序列化后的字典。
+            为 None 时表示仅有纯文本 content，前端应降级使用 content 字段。
         message_type: 消息类型（result/error/delegate）
         metadata: 附加元数据
     """
 
     event_type: CoreEventType = field(default=CoreEventType.AGENT_RESPONSE, init=False)
     content: str = ""
+    content_blocks: list[dict[str, Any]] | None = None
     message_type: str = "result"
     metadata: dict[str, Any] = field(default_factory=dict)
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ghrah.core.events import (
     ActionChainUpdatedEvent,
@@ -159,13 +159,14 @@ class ServerEventPublisher(EventPublisher):
                 }
             )
         elif isinstance(event, AgentResponseEvent):
-            payload.update(
-                {
-                    "content": event.content,
-                    "message_type": event.message_type,
-                    "metadata": event.metadata,
-                }
-            )
+            payload_update: dict[str, Any] = {
+                "content": event.content,
+                "message_type": event.message_type,
+                "metadata": event.metadata,
+            }
+            if event.content_blocks is not None:
+                payload_update["content_blocks"] = event.content_blocks
+            payload.update(payload_update)
         elif isinstance(event, SessionCreatedEvent):
             payload.update(
                 {

@@ -45,6 +45,7 @@ from ghrah.abilities.executor import (
     RemoteAbilityExecutor,
 )
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
+from ghrah.chat.content import block_to_dict
 from ghrah.chat.format import ChatFormat, LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.context.manager import ContextManager
@@ -551,6 +552,7 @@ class ActorAgent:
                 AgentResponseEvent(
                     agent_name=self.config.name,
                     content=response.content,
+                    content_blocks=response.content_blocks,
                     message_type="result",
                     metadata={
                         "iteration": self._context_manager.iteration,
@@ -1050,10 +1052,20 @@ class ActorAgent:
         else:
             content = "No action executed"
 
+        # 从 ContextManager 的最后一条 AI 消息中提取结构化 content_blocks
+        # 以保留 reasoning/text 等类型区分
+        content_blocks: list[dict] | None = None
+        messages = cm.message_store.current_messages
+        for msg in reversed(messages):
+            if msg.role == "ai" and msg.content_blocks:
+                content_blocks = [block_to_dict(b) for b in msg.content_blocks]
+                break
+
         reply = Message.create_reply(
             original=original,
             content=content,
             msg_type=MessageType.RESULT,
+            content_blocks=content_blocks,
         )
         self._message_history.append(reply)
 

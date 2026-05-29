@@ -17,6 +17,7 @@ from ghrah.core.config import (
     ModelOverrides,
     WindowConfig,
 )
+from ghrah.core.exceptions import RegistryError
 from ghrah.core.server.connection_manager import ConnectionManager
 from ghrah.core.server.event_bus import EventBus
 from ghrah.protocol.types import (
@@ -478,7 +479,14 @@ class MessageRouter:
                               f"for agent '{payload.config.name}': {e}",
                     )
 
-        result = await self._supervisor.spawn_agent(core_config, abilities=ability_instances)
+        try:
+            result = await self._supervisor.spawn_agent(core_config, abilities=ability_instances)
+        except RegistryError as e:
+            return create_command_result(
+                request_id=request_id,
+                success=False,
+                error=str(e),
+            )
         agent_name = result
 
         if agent_name:
