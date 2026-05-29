@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -178,19 +179,20 @@ class ConnectionManager:
         if exclude_session and exclude_session in target_sessions:
             target_sessions.remove(exclude_session)
 
-        sent_count = 0
-        failed_sessions: list[str] = []
-        for session_id in target_sessions:
+        async def _send(session_id: str) -> str | None:
             websocket = self._connections.get(session_id)
             if websocket is None:
-                continue
-
+                return None
             try:
                 await websocket.send_json(message)
-                sent_count += 1
+                return session_id
             except Exception:
                 logger.warning(f"Failed to send to session {session_id}, removing")
-                failed_sessions.append(session_id)
+                return f"fail:{session_id}"
+
+        results = await asyncio.gather(*[_send(sid) for sid in target_sessions])
+        sent_count = sum(1 for r in results if r is not None and not r.startswith("fail:"))
+        failed_sessions = [r[5:] for r in results if r is not None and r.startswith("fail:")]
 
         for session_id in failed_sessions:
             self.disconnect(session_id)

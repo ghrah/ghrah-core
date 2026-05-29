@@ -48,6 +48,9 @@ class MessageStore:
         """当前消息数。"""
         return len(self._messages)
 
+    def __len__(self) -> int:
+        return len(self._messages)
+
     @property
     def last_snapshot(self) -> list[ChatMessage] | None:
         """上一次快照的完整消息（副本），无快照则返回 None。"""
