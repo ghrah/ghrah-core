@@ -8,6 +8,7 @@ import asyncio
 import logging
 from typing import Any
 
+from ghrah.abilities.base import Ability
 from ghrah.abilities.registry import AbilityRegistry
 from ghrah.communication.supervisor import SupervisorActor
 from ghrah.core.config import (
@@ -460,15 +461,20 @@ class MessageRouter:
             ability_instances = []
             for ability_def in payload.abilities:
                 try:
-                    ability = AbilityRegistry.create(
-                        ability_def.ability_type, **ability_def.params
-                    )
+                    ability = self._create_ability_from_def(ability_def)
                     ability_instances.append(ability)
                 except KeyError as e:
                     return create_command_result(
                         request_id=request_id,
                         success=False,
                         error=f"Unknown ability type '{ability_def.ability_type}' "
+                              f"for agent '{payload.config.name}': {e}",
+                    )
+                except (TypeError, ValueError) as e:
+                    return create_command_result(
+                        request_id=request_id,
+                        success=False,
+                        error=f"Invalid params for ability '{ability_def.ability_type}' "
                               f"for agent '{payload.config.name}': {e}",
                     )
 
@@ -491,6 +497,36 @@ class MessageRouter:
             success=True,
             data={"name": agent_name},
         )
+
+    def _create_ability_from_def(self, ability_def: Any) -> Ability:
+        """将 AbilityDefinitionPayload 转换为 Ability 实例。
+
+        处理文件系统类 Ability 的权限参数，将 require_hitl/allowed_paths/denied_paths
+        等原始字段转换为 FSPermissionChecker 后再传入构造函数。
+        """
+        from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
+
+        params = dict(ability_def.params) if ability_def.params else {}
+        ability_type = ability_def.ability_type
+
+        _fs_ability_types = {"read_file", "write_file", "list_directory"}
+        _fs_permission_keys = {"require_hitl", "allowed_paths", "denied_paths", "workspace_root"}
+
+        if ability_type in _fs_ability_types and _fs_permission_keys & set(params.keys()):
+            fs_params = {k: params.pop(k) for k in _fs_permission_keys if k in params}
+            require_hitl = fs_params.get("require_hitl", True)
+            allowed_paths = fs_params.get("allowed_paths")
+            denied_paths = fs_params.get("denied_paths")
+            workspace_root = fs_params.get("workspace_root")
+            checker = FSPermissionChecker(
+                allowed_paths=allowed_paths,
+                workspace_root=workspace_root,
+                denied_paths=denied_paths,
+                require_approval=require_hitl if isinstance(require_hitl, bool) else True,
+            )
+            params["permission_checker"] = checker
+
+        return AbilityRegistry.create(ability_type, **params)
 
     async def _handle_terminate_agent(
         self, message: Message, session_id: str, request_id: str

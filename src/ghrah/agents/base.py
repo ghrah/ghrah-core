@@ -528,18 +528,18 @@ class ActorAgent:
             # ────── 结束 ──────
 
             # 驱动循环
-            # 发布根节点的 ActionChainUpdatedEvent
-            root_node = self._context_manager.chain.head
-            if root_node is not None:
+            # 发布链头节点的 ActionChainUpdatedEvent
+            head_node = self._context_manager.chain.head
+            if head_node is not None:
                 try:
                     await self._event_publisher.publish(
                         ActionChainUpdatedEvent(
                             agent_name=self.config.name,
-                            node=serialize_node(root_node),
+                            node=serialize_node(head_node),
                         )
                     )
                 except Exception:
-                    logger.debug("Failed to publish root node event", exc_info=True)
+                    logger.debug("Failed to publish head node event", exc_info=True)
 
             await self._drive_loop()
 
@@ -1158,7 +1158,7 @@ class ActorAgent:
                 "branch_name": session.branch_name,
                 "state": "active" if is_active else "idle",
                 "head_node_id": head_node.id if head_node else None,
-                "root_node_id": self._context_manager._chain.root.id if self._context_manager._chain.root else None,
+                # "root_node_id": self._context_manager._chain.root.id if self._context_manager._chain.root else None,
                 "parent_session_id": session.parent_session_id,
                 "fork_point_node_id": session.parent_node_id,
                 "created_at": session.created_at.isoformat() if session.created_at else "",

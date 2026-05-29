@@ -101,18 +101,18 @@ def create_rebased_context(
     if source_messages:
         child_cm.extend_messages(source_messages)
 
-    # 6. 更新根节点 metadata，记录 rebase 来源
-    root_node = child_cm.chain.head
-    if root_node is not None:
-        rebased_root = dataclasses.replace(
-            root_node,
+    # 6. 更新链头节点 metadata，记录 rebase 来源
+    head_node = child_cm.chain.head
+    if head_node is not None:
+        rebased_head = dataclasses.replace(
+            head_node,
             metadata={
-                **root_node.metadata,
+                **head_node.metadata,
                 "rebase_from_agent": source_cm.agent_name,
                 "rebase_from_node_id": source_node_id,
             },
         )
-        child_cm.update_root_node(rebased_root)
+        child_cm.update_root_node(rebased_head)
 
     # 7. 更新根 session metadata，记录 rebase 来源
     source_session = source_cm.get_active_session()
