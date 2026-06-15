@@ -4,6 +4,11 @@
 
 """核心抽象层：Agent 配置、消息、异常、事件、HITL 等基础定义"""
 
+from ghrah.core.ability_protocol import (
+    AbilityProtocol,
+    ExecutorProtocol,
+    RegistryProtocol,
+)
 from ghrah.core.command_sender import CommandSender
 from ghrah.core.config import AgentConfig, ContextConfig, ModelOverrides, WindowConfig
 from ghrah.core.event_publisher import (
@@ -37,6 +42,10 @@ from ghrah.core.hitl import HITLFutureStore, HITLResult
 from ghrah.core.message import Message, MessageType
 
 __all__ = [
+    # 协议
+    "AbilityProtocol",
+    "ExecutorProtocol",
+    "RegistryProtocol",
     # 事件
     "ActionChainUpdatedEvent",
     "AgentErrorEvent",

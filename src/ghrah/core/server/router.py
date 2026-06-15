@@ -8,9 +8,8 @@ import asyncio
 import logging
 from typing import Any
 
-from ghrah.abilities.base import Ability
-from ghrah.abilities.registry import AbilityRegistry
 from ghrah.communication.supervisor import SupervisorActor
+from ghrah.core.ability_protocol import AbilityProtocol
 from ghrah.core.exceptions import RegistryError
 from ghrah.core.server.connection_manager import ConnectionManager
 from ghrah.core.server.event_bus import EventBus
@@ -506,13 +505,14 @@ class MessageRouter:
             data={"name": agent_name},
         )
 
-    def _create_ability_from_def(self, ability_def: Any) -> Ability:
+    def _create_ability_from_def(self, ability_def: Any) -> AbilityProtocol:
         """将 AbilityDefinitionPayload 转换为 Ability 实例。
 
         处理文件系统类 Ability 的权限参数，将 require_hitl/allowed_paths/denied_paths
         等原始字段转换为 FSPermissionChecker 后再传入构造函数。
         """
         from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
+        from ghrah.abilities.registry import AbilityRegistry
 
         params = dict(ability_def.params) if ability_def.params else {}
         ability_type = ability_def.ability_type

@@ -17,12 +17,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.conversation import ConversationAbility
 from ghrah.abilities.builtin.end_task import EndTaskAbility
 from ghrah.agents.base import ActorAgent
 from ghrah.communication.registry import AgentRegistry
 from ghrah.communication.router import MessageRouter
+from ghrah.core.ability_protocol import AbilityProtocol
 from ghrah.core.exceptions import (
     AgentNotFoundError,
     RegistryError,
@@ -81,7 +81,7 @@ class SupervisorActor:
     async def spawn_agent(
         self,
         config: AgentConfig,
-        abilities: list[Ability] | None = None,
+        abilities: list[AbilityProtocol] | None = None,
     ) -> str:
         """创建并注册一个 Agent，返回 agent name。
 
@@ -128,7 +128,7 @@ class SupervisorActor:
             )
         else:
             # 注册默认基础 Ability 组合
-            default_abilities: list[Ability] = [ConversationAbility(), EndTaskAbility()]
+            default_abilities: list[AbilityProtocol] = [ConversationAbility(), EndTaskAbility()]
             for ability in default_abilities:
                 actor_handle.register_ability(ability)
             logger.info(

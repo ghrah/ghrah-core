@@ -34,7 +34,8 @@ from ghrah.abilities.base import Ability
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.hooks import HookPoint, HookResult
 from ghrah.chat.content import ToolCallBlock
-from ghrah.core.event_publisher import EventPublisher, NullEventPublisher
+from ghrah.core.ability_protocol import AbilityProtocol
+from ghrah.core.event_publisher import EventPublisher
 from ghrah.core.events import HITLRequestEvent
 from ghrah.core.exceptions import HookError
 from ghrah.core.hitl import HITLFutureStore, HITLResult
@@ -73,7 +74,7 @@ class AbilityExecutor(ABC):
     @abstractmethod
     async def execute_ability(
         self,
-        ability: Ability,
+        ability: AbilityProtocol,
         context: AbilityExecutionContext,
     ) -> ActionResult:
         """执行单个 Ability。
@@ -91,7 +92,7 @@ class AbilityExecutor(ABC):
     async def execute_tool_calls(
         self,
         tool_calls: list[ToolCallBlock],
-        abilities: dict[str, Ability],
+        abilities: dict[str, AbilityProtocol],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
     ) -> list[dict]:
@@ -226,7 +227,11 @@ class LocalAbilityExecutor(AbilityExecutor):
         """
         self._agent_name = agent_name
         self._hooks: list[Hook] = hooks or []
-        self._event_publisher: EventPublisher = event_publisher or NullEventPublisher()
+        if event_publisher is not None:
+            self._event_publisher: EventPublisher = event_publisher
+        else:
+            from ghrah.core.event_publisher import NullEventPublisher
+            self._event_publisher = NullEventPublisher()
         self._hitl_store = HITLFutureStore()
         self._hitl_timeout = hitl_timeout
         self._workspace_root = Path(workspace_root).resolve() if workspace_root else None
@@ -254,7 +259,7 @@ class LocalAbilityExecutor(AbilityExecutor):
 
     async def execute_ability(
         self,
-        ability: Ability,
+        ability: AbilityProtocol,
         context: AbilityExecutionContext,
     ) -> ActionResult:
         """执行单个 Ability，包含 PRE_EXECUTE 和 POST_EXECUTE Hook。
@@ -321,7 +326,7 @@ class LocalAbilityExecutor(AbilityExecutor):
     async def execute_tool_calls(
         self,
         tool_calls: list[ToolCallBlock],
-        abilities: dict[str, Ability],
+        abilities: dict[str, AbilityProtocol],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
     ) -> list[dict]:
@@ -339,7 +344,7 @@ class LocalAbilityExecutor(AbilityExecutor):
             结果列表
         """
         results: list[dict] = []
-        tool_call_tasks: list[tuple[Ability, dict[str, Any], str]] = []
+        tool_call_tasks: list[tuple[AbilityProtocol, dict[str, Any], str]] = []
         task_ability_names: list[str] = []
 
         for tc in tool_calls:
@@ -396,7 +401,7 @@ class LocalAbilityExecutor(AbilityExecutor):
 
     async def _execute_single_with_context(
         self,
-        ability: Ability,
+        ability: AbilityProtocol,
         tool_args: dict[str, Any],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
@@ -654,7 +659,7 @@ class RemoteAbilityExecutor(AbilityExecutor):
 
     async def execute_ability(
         self,
-        ability: Ability,
+        ability: AbilityProtocol,
         context: AbilityExecutionContext,
     ) -> ActionResult:
         """发送 tool_call 到 Subject，等待执行结果。
@@ -720,7 +725,7 @@ class RemoteAbilityExecutor(AbilityExecutor):
     async def execute_tool_calls(
         self,
         tool_calls: list[ToolCallBlock],
-        abilities: dict[str, Ability],
+        abilities: dict[str, AbilityProtocol],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
     ) -> list[dict]:

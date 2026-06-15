@@ -53,6 +53,7 @@ from ghrah.context.persistence import create_persistence
 from ghrah.context.persistence.serialization import serialize_node
 from ghrah.context.session import Session
 from ghrah.context.window import WindowManager
+from ghrah.core.ability_protocol import AbilityProtocol
 from ghrah.core.event_publisher import (
     EventPublisher,
     NullEventPublisher,
@@ -163,7 +164,7 @@ class ActorAgent:
         self._supervisor = supervisor
         self._llm: ChatFormat | None = None
         self._initialized = False
-        self._abilities: dict[str, Ability] = {}
+        self._abilities: dict[str, AbilityProtocol] = {}
         self._bound_tools: list[dict[str, Any]] = []
         self._all_hooks: list[Hook] = []
         self._event_publisher: EventPublisher = NullEventPublisher()
@@ -248,7 +249,7 @@ class ActorAgent:
     # Ability 注册
     # ----------------------------------------------------------------
 
-    def register_ability(self, ability: Ability) -> str:
+    def register_ability(self, ability: AbilityProtocol) -> str:
         """注册一个能力到 Agent。
 
         相当于 tool 的绑定，但比单纯的 tool bind 有更多的控制与自由度。
