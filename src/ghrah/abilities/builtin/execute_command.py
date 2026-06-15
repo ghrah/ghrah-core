@@ -29,11 +29,12 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.command_safety import (
     CommandSafetyCategory,
     CommandSafetyChecker,
 )
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext

@@ -28,8 +28,8 @@ from ghrah.abilities._utils import is_subpath
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 
 if TYPE_CHECKING:
-    from ghrah.abilities.base import ActionResult
     from ghrah.abilities.context import AbilityExecutionContext
+    from ghrah.types.results import ActionResult
 
 __all__ = [
     "FSPermissionChecker",

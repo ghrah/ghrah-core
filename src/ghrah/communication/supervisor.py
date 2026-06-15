@@ -23,12 +23,12 @@ from ghrah.abilities.builtin.end_task import EndTaskAbility
 from ghrah.agents.base import ActorAgent
 from ghrah.communication.registry import AgentRegistry
 from ghrah.communication.router import MessageRouter
-from ghrah.core.config import AgentConfig
 from ghrah.core.exceptions import (
     AgentNotFoundError,
     RegistryError,
 )
 from ghrah.core.message import Message, MessageType
+from ghrah.types.config_types import AgentConfig
 
 if TYPE_CHECKING:
     from ghrah.core.command_sender import CommandSender

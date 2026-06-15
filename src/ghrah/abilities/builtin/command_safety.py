@@ -33,8 +33,8 @@ from typing import TYPE_CHECKING
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 
 if TYPE_CHECKING:
-    from ghrah.abilities.base import ActionResult
     from ghrah.abilities.context import AbilityExecutionContext
+    from ghrah.types.results import ActionResult
 
 logger = logging.getLogger(__name__)
 

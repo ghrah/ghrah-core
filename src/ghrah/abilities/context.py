@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ghrah.abilities.base import ActionResult
     from ghrah.context.manager import ContextManager
+    from ghrah.types.results import ActionResult
 
 __all__ = ["AbilityExecutionContext"]
 

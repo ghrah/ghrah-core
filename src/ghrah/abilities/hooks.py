@@ -26,8 +26,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ghrah.abilities.base import ActionResult
     from ghrah.abilities.context import AbilityExecutionContext
+    from ghrah.types.results import ActionResult
 
 __all__ = [
     "HookPoint",

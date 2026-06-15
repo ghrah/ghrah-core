@@ -35,8 +35,8 @@ from ghrah.types.results import ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
-    from ghrah.core.config import AgentConfig
     from ghrah.core.message import Message
+    from ghrah.types.config_types import AgentConfig
 
 logger = logging.getLogger(__name__)
 

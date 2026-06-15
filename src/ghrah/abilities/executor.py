@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ghrah.abilities._utils import ABILITY_PATH_SPECS
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.hooks import HookPoint, HookResult
 from ghrah.chat.content import ToolCallBlock
@@ -39,6 +39,7 @@ from ghrah.core.events import HITLRequestEvent
 from ghrah.core.exceptions import HookError
 from ghrah.core.hitl import HITLFutureStore, HITLResult
 from ghrah.protocol.types import CommandType
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.hooks import Hook

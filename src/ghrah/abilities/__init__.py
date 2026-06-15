@@ -37,7 +37,7 @@
 - CommandApprovalHook: 命令执行审批 Hook
 """
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.broadcast_message import BroadcastMessageAbility
 from ghrah.abilities.builtin.command_safety import (
     CommandApprovalHook,
@@ -69,6 +69,7 @@ from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.executor import AbilityExecutor, LocalAbilityExecutor, RemoteAbilityExecutor
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.abilities.registry import AbilityRegistry
+from ghrah.types.results import ActionOutcome, ActionResult
 
 
 def _register_builtin_abilities() -> None:

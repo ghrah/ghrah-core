@@ -25,8 +25,9 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext

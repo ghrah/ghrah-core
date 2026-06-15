@@ -37,7 +37,7 @@ import copy
 import logging
 from typing import Any
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.executor import (
     AbilityExecutor,
@@ -81,6 +81,7 @@ from ghrah.llm.response_utils import (
     extract_token_usage,
 )
 from ghrah.types.config_types import AgentConfig, WindowConfig
+from ghrah.types.results import ActionOutcome, ActionResult
 
 logger = logging.getLogger(__name__)
 

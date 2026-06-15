@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ghrah.chat.format import LLMResponse, TokenUsage
+from ghrah.chat.format import LLMResponse
+from ghrah.types.tokens import TokenUsage
 
 __all__ = [
     "extract_token_usage",
