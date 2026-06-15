@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ghrah.core.exceptions import AgentNotFoundError, RegistryError
+from ghrah.communication.errors import AgentNotFoundError, RegistryError
 from ghrah.types.config_types import AgentConfig
 
 logger = logging.getLogger(__name__)

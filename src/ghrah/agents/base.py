@@ -39,6 +39,7 @@ from typing import Any
 
 from ghrah.abilities.base import Ability
 from ghrah.abilities.context import AbilityExecutionContext
+from ghrah.abilities.errors import AbilityNotFoundError
 from ghrah.abilities.executor import (
     AbilityExecutor,
     LocalAbilityExecutor,
@@ -48,6 +49,11 @@ from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import block_to_dict
 from ghrah.chat.format import ChatFormat, LLMResponse
 from ghrah.chat.message import ChatMessage
+from ghrah.chat.response import (
+    extract_reasoning_content,
+    extract_response_metadata,
+    extract_token_usage,
+)
 from ghrah.context.manager import ContextManager
 from ghrah.context.persistence import create_persistence
 from ghrah.context.persistence.serialization import serialize_node
@@ -69,18 +75,12 @@ from ghrah.core.events import (
     SessionSwitchedEvent,
 )
 from ghrah.core.exceptions import (
-    AbilityNotFoundError,
     AgentError,
     AgentInitializationError,
     HookError,
 )
 from ghrah.core.message import Message, MessageType
 from ghrah.llm.factory import LLMFactory
-from ghrah.llm.response_utils import (
-    extract_reasoning_content,
-    extract_response_metadata,
-    extract_token_usage,
-)
 from ghrah.types.config_types import AgentConfig, WindowConfig
 from ghrah.types.results import ActionOutcome, ActionResult
 

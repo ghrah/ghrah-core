@@ -21,6 +21,7 @@ import pytest
 
 from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
+from ghrah.abilities.errors import AbilityNotFoundError
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import TextBlock, ToolCallBlock
 from ghrah.chat.format import LLMResponse
@@ -244,7 +245,6 @@ class TestAbilityRegistration:
         assert len(agent._all_hooks) == 0
 
     def test_unregister_nonexistent_raises(self) -> None:
-        from ghrah.core.exceptions import AbilityNotFoundError
 
         agent = _create_agent()
 

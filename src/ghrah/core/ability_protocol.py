@@ -49,12 +49,15 @@ class AbilityProtocol(Protocol):
 class RegistryProtocol(Protocol):
     """Ability 工厂注册表协议 — core 层仅依赖此协议。
 
-    定义 create() 和 has() 方法，router.py 不需要知道具体注册细节。
+    定义 create()、has() 和 list_types() 方法，
+    router.py 和 resolver.py 不需要知道具体注册细节。
     """
 
     def create(self, ability_type: str, **params: Any) -> AbilityProtocol: ...
 
     def has(self, ability_type: str) -> bool: ...
+
+    def list_types(self) -> list[str]: ...
 
 
 @runtime_checkable

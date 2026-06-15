@@ -66,6 +66,7 @@ from ghrah.abilities.builtin.spawn_agent import SpawnAgentAbility
 from ghrah.abilities.builtin.terminate_agent import TerminateAgentAbility
 from ghrah.abilities.builtin.write_file import WriteFileAbility
 from ghrah.abilities.context import AbilityExecutionContext
+from ghrah.abilities.errors import AbilityError, AbilityNotFoundError
 from ghrah.abilities.executor import AbilityExecutor, LocalAbilityExecutor, RemoteAbilityExecutor
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.abilities.paths import (
@@ -108,6 +109,8 @@ __all__ = [
     "Ability",
     "ActionOutcome",
     "ActionResult",
+    "AbilityError",
+    "AbilityNotFoundError",
     "AbilityExecutionContext",
     "Hook",
     "HookPoint",

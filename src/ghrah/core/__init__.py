@@ -4,6 +4,7 @@
 
 """核心抽象层：Agent 配置、消息、异常、事件、HITL 等基础定义"""
 
+from ghrah.core._base_error import ActorAgentError
 from ghrah.core.ability_protocol import (
     AbilityProtocol,
     ExecutorProtocol,
@@ -25,21 +26,17 @@ from ghrah.core.events import (
     HITLRequestEvent,
 )
 from ghrah.core.exceptions import (
-    AbilityError,
-    AbilityNotFoundError,
     AgentError,
     AgentInitializationError,
-    AgentNotFoundError,
     AgentTimeoutError,
     CommunicationTimeoutError,
     HookError,
-    LLMError,
-    MessageError,
-    RegistryError,
     RoutingError,
+    ToolError,
 )
 from ghrah.core.hitl import HITLFutureStore, HITLResult
 from ghrah.core.message import Message, MessageType
+from ghrah.core.supervisor_protocol import SupervisorProtocol
 from ghrah.core.window_protocol import (
     ContextManagerProtocol,
     MessageFactory,
@@ -50,10 +47,14 @@ from ghrah.core.window_protocol import (
 )
 
 __all__ = [
+    # 基础异常
+    "ActorAgentError",
     # 协议
     "AbilityProtocol",
     "ExecutorProtocol",
     "RegistryProtocol",
+    # Supervisor 协议
+    "SupervisorProtocol",
     # 窗口协议
     "WindowableBlock",
     "WindowableMessage",
@@ -82,20 +83,43 @@ __all__ = [
     "ContextConfig",
     "ModelOverrides",
     "WindowConfig",
-    # 异常
-    "AbilityError",
-    "AbilityNotFoundError",
+    # 异常 — core 领域
     "AgentError",
     "AgentInitializationError",
-    "AgentNotFoundError",
     "AgentTimeoutError",
     "CommunicationTimeoutError",
     "HookError",
-    "LLMError",
-    "MessageError",
-    "RegistryError",
     "RoutingError",
+    "ToolError",
+    # 异常 — re-export from domain modules (lazy)
+    "AbilityError",
+    "AbilityNotFoundError",
+    "AgentNotFoundError",
+    "LLMError",
+    "RegistryError",
     # 消息
     "Message",
     "MessageType",
 ]
+
+
+def __getattr__(name: str) -> type:
+    if name in {
+        "AbilityError",
+        "AbilityNotFoundError",
+        "AgentNotFoundError",
+        "LLMError",
+        "RegistryError",
+    }:
+        import importlib
+
+        _DOMAIN_MAP = {
+            "AbilityError": "ghrah.abilities.errors",
+            "AbilityNotFoundError": "ghrah.abilities.errors",
+            "AgentNotFoundError": "ghrah.communication.errors",
+            "LLMError": "ghrah.llm.errors",
+            "RegistryError": "ghrah.communication.errors",
+        }
+        module = importlib.import_module(_DOMAIN_MAP[name])
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

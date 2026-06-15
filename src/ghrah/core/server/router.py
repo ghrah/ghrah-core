@@ -8,9 +8,14 @@ import asyncio
 import logging
 from typing import Any
 
+from ghrah.communication.errors import RegistryError
 from ghrah.communication.supervisor import SupervisorActor
 from ghrah.core.ability_protocol import AbilityProtocol
-from ghrah.core.exceptions import RegistryError
+from ghrah.core.config.builders import (
+    build_context_from_dict,
+    build_model_overrides_from_dict,
+    build_window_from_dict,
+)
 from ghrah.core.server.connection_manager import ConnectionManager
 from ghrah.core.server.event_bus import EventBus
 from ghrah.protocol.types import (
@@ -29,43 +34,9 @@ from ghrah.protocol.types import (
     create_error,
     generate_request_id,
 )
-from ghrah.types.config_types import (
-    AgentConfig,
-    ContextConfig,
-    ModelOverrides,
-    WindowConfig,
-)
+from ghrah.types.config_types import AgentConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _build_window(data: dict[str, Any]) -> WindowConfig:
-    return WindowConfig(
-        max_tokens=data.get("max_tokens", 4096),
-        strategies=data.get("strategies", ["tool_call_fold", "truncation"]),
-        tool_call_max_length=data.get("tool_call_max_length", 500),
-        sliding_window_size=data.get("sliding_window_size", 20),
-    )
-
-
-def _build_context(data: dict[str, Any]) -> ContextConfig:
-    return ContextConfig(
-        persistence_type=data.get("persistence_type"),
-        persistence_root_dir=data.get("persistence_root_dir"),
-        persistence_compress=data.get("persistence_compress", True),
-        auto_persist=data.get("auto_persist", False),
-        snapshot_interval=data.get("snapshot_interval", 5),
-        persistence_run_id=data.get("persistence_run_id"),
-    )
-
-
-def _build_model_overrides(data: dict[str, Any]) -> ModelOverrides:
-    return ModelOverrides(
-        temperature=data.get("temperature"),
-        max_tokens=data.get("max_tokens"),
-        top_p=data.get("top_p"),
-        top_k=data.get("top_k"),
-    )
 
 
 class MessageRouter:
@@ -447,10 +418,10 @@ class MessageRouter:
             system_prompt=payload.config.system_prompt,
             max_iterations=payload.config.max_iterations,
             communication_timeout=payload.config.communication_timeout,
-            window=_build_window(payload.config.window) if payload.config.window else None,
-            context=_build_context(payload.config.context) if payload.config.context else None,
+            window=build_window_from_dict(payload.config.window) if payload.config.window else None,
+            context=build_context_from_dict(payload.config.context) if payload.config.context else None,
             model_overrides=(
-                _build_model_overrides(payload.config.model_overrides)
+                build_model_overrides_from_dict(payload.config.model_overrides)
                 if payload.config.model_overrides
                 else None
             ),

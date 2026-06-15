@@ -14,6 +14,8 @@ import copy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ghrah.core.supervisor_protocol import SupervisorProtocol
+
 if TYPE_CHECKING:
     from ghrah.core.window_protocol import ContextManagerProtocol
     from ghrah.types.results import ActionResult
@@ -49,7 +51,7 @@ class AbilityExecutionContext:
     current_node_id: str | None = None
 
     # 集群通信支持
-    supervisor: Any = None
+    supervisor: SupervisorProtocol | None = None
     agent_name: str = ""
 
     # ---- 兼容旧代码的临时属性 ----

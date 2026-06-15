@@ -16,18 +16,22 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 
+from ghrah.core.ability_protocol import RegistryProtocol
+from ghrah.core.config.builders import (
+    build_context_from_overrides,
+    build_model_overrides_from_config,
+    build_window_from_overrides,
+)
 from ghrah.manifest.ability import AbilityHooks
 from ghrah.manifest.agent import (
     AbilityRef,
     AgentManifest,
-    PersistenceOverrides,
-    WindowOverrides,
 )
 from ghrah.manifest.builtins import load_all_builtin_manifests
 from ghrah.manifest.errors import ManifestNotFoundError, ManifestValidationError
 from ghrah.manifest.protocols import ManifestStoreProtocol
 from ghrah.manifest.types import ImplementationDef, PermissionFlags, ToolSchema
-from ghrah.types.config_types import AgentConfig, ContextConfig, ModelOverrides, WindowConfig
+from ghrah.types.config_types import AgentConfig, ContextConfig, WindowConfig
 
 __all__ = [
     "ResolvedAbility",
@@ -47,23 +51,32 @@ class ResolvedAbility:
     hooks: AbilityHooks
 
     @classmethod
-    def from_builtin(cls, ability_type: str) -> ResolvedAbility:
+    def from_builtin(
+        cls, ability_type: str, registry: RegistryProtocol | None = None
+    ) -> ResolvedAbility:
         """从 builtin 类型名构建 ResolvedAbility。
 
         1. 验证 ability_type 在 AbilityRegistry 中已注册
         2. 从 builtins 包加载对应的 AbilityManifest
         3. 构建 ResolvedAbility（权限来自 manifest，hooks 来自 manifest）
 
+        Args:
+            ability_type: builtin 能力类型名
+            registry: 可选的 RegistryProtocol 实现，None 则 fallback 到 AbilityRegistry
+
         Raises:
-            ManifestValidationError: ability_type 未在 AbilityRegistry 中注册
+            ManifestValidationError: ability_type 未在 registry 中注册
             ManifestNotFoundError: builtin manifest 不存在
         """
-        from ghrah.abilities.registry import AbilityRegistry
+        if registry is None:
+            from ghrah.abilities.registry import AbilityRegistry
 
-        if not AbilityRegistry.has(ability_type):
+            registry = AbilityRegistry
+
+        if not registry.has(ability_type):
             raise ManifestValidationError(
                 f"Unknown builtin ability type: '{ability_type}'. "
-                f"Available types: {AbilityRegistry.list_types()}"
+                f"Available types: {registry.list_types()}"
             )
 
         builtins = load_all_builtin_manifests()
@@ -140,11 +153,11 @@ class ManifestResolver:
 
         if manifest.context:
             if manifest.context.window:
-                window = _build_window_config(manifest.context.window)
+                window = build_window_from_overrides(manifest.context.window)
             if manifest.context.persistence:
-                context = _build_context_config(manifest.context.persistence)
+                context = build_context_from_overrides(manifest.context.persistence)
 
-        model_overrides = _build_model_overrides(manifest.model)
+        model_overrides = build_model_overrides_from_config(manifest.model)
 
         return AgentConfig(
             name=name,
@@ -191,42 +204,3 @@ class ManifestResolver:
                 )
             resolved.append(r)
         return resolved
-
-
-def _build_window_config(overrides: WindowOverrides) -> WindowConfig:
-    """从 WindowOverrides 构建 WindowConfig。"""
-    return WindowConfig(
-        max_tokens=overrides.max_tokens if overrides.max_tokens is not None else 4096,
-        strategies=overrides.strategies if overrides.strategies is not None else ["tool_call_fold", "truncation"],
-        tool_call_max_length=overrides.tool_call_max_length if overrides.tool_call_max_length is not None else 500,
-        sliding_window_size=overrides.sliding_window_size if overrides.sliding_window_size is not None else 20,
-    )
-
-
-def _build_context_config(overrides: PersistenceOverrides) -> ContextConfig:
-    """从 PersistenceOverrides 构建 ContextConfig。"""
-    return ContextConfig(
-        persistence_type=overrides.type,
-        persistence_compress=overrides.compress if overrides.compress is not None else True,
-        auto_persist=overrides.auto_persist if overrides.auto_persist is not None else False,
-        snapshot_interval=overrides.snapshot_interval if overrides.snapshot_interval is not None else 5,
-    )
-
-
-def _build_model_overrides(model: ModelConfig) -> ModelOverrides | None:
-    """从 AgentManifest.model 构建 ModelOverrides。
-
-    仅在至少一个覆盖字段非 None 时返回 ModelOverrides，
-    否则返回 None（表示无覆盖）。
-    """
-    if not any(
-        v is not None
-        for v in [model.temperature, model.max_tokens, model.top_p, model.top_k]
-    ):
-        return None
-    return ModelOverrides(
-        temperature=model.temperature,
-        max_tokens=model.max_tokens,
-        top_p=model.top_p,
-        top_k=model.top_k,
-    )

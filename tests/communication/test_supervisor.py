@@ -12,9 +12,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ghrah.communication.errors import AgentNotFoundError, RegistryError
 from ghrah.communication.supervisor import SupervisorActor
 from ghrah.core.config import AgentConfig
-from ghrah.core.exceptions import AgentNotFoundError, RegistryError
 
 
 @pytest.fixture

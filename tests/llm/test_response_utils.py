@@ -12,7 +12,7 @@ import pytest
 
 from ghrah.chat.content import ReasoningBlock, TextBlock
 from ghrah.chat.format import LLMResponse, TokenUsage
-from ghrah.llm.response_utils import (
+from ghrah.chat.response import (
     extract_reasoning_content,
     extract_response_metadata,
     extract_token_usage,
