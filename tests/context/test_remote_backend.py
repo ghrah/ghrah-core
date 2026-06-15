@@ -360,29 +360,32 @@ class TestRemoteBackendConfigIntegration:
 
     def test_config_remote_backend_type(self):
         """测试 ContextConfig 支持 remote 持久化类型。"""
-        from ghrah.core.config import PERSISTENCE_BACKEND_TYPES
+        from ghrah.context.persistence import PERSISTENCE_BACKEND_TYPES
 
         assert "remote" in PERSISTENCE_BACKEND_TYPES
 
     def test_config_create_remote_backend_with_command_sender(self):
-        """测试 ContextConfig 通过 set_command_sender 创建 RemoteBackend。"""
-        from ghrah.core.config import ContextConfig
+        """测试 ContextConfig 通过 command_sender 创建 RemoteBackend。"""
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(
             persistence_type="remote",
         )
         mock_command_sender = MagicMock(spec=CommandSender)
-        config.set_command_sender(mock_command_sender, agent_name="test-agent")
+        config.command_sender = mock_command_sender
+        config.persistence_agent_name = "test-agent"
 
-        backend = config.create_persistence()
+        backend = create_persistence(config)
         assert isinstance(backend, RemoteBackend)
 
     def test_config_remote_backend_without_command_sender(self):
         """测试 ContextConfig 创建 RemoteBackend 时缺少 command_sender 应报错。"""
-        from ghrah.core.config import ContextConfig
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(
             persistence_type="remote",
         )
         with pytest.raises(ValueError, match="command_sender is required"):
-            config.create_persistence()
+            create_persistence(config)

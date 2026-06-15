@@ -49,10 +49,10 @@ from ghrah.chat.content import block_to_dict
 from ghrah.chat.format import ChatFormat, LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.context.manager import ContextManager
+from ghrah.context.persistence import create_persistence
 from ghrah.context.persistence.serialization import serialize_node
 from ghrah.context.session import Session
 from ghrah.context.window import WindowManager
-from ghrah.core.config import AgentConfig, WindowConfig
 from ghrah.core.event_publisher import (
     EventPublisher,
     NullEventPublisher,
@@ -80,6 +80,7 @@ from ghrah.llm.response_utils import (
     extract_response_metadata,
     extract_token_usage,
 )
+from ghrah.types.config_types import AgentConfig, WindowConfig
 
 logger = logging.getLogger(__name__)
 
@@ -188,10 +189,9 @@ class ActorAgent:
 
         context_config = config.context
 
-        # 根据 ContextConfig 创建持久化后端（通过工厂方法，支持多种后端类型）
         persistence = None
         if context_config is not None:
-            persistence = context_config.create_persistence()
+            persistence = create_persistence(context_config)
 
         self._context_manager = ContextManager(
             agent_name=config.name,

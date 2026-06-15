@@ -11,12 +11,6 @@ from typing import Any
 from ghrah.abilities.base import Ability
 from ghrah.abilities.registry import AbilityRegistry
 from ghrah.communication.supervisor import SupervisorActor
-from ghrah.core.config import (
-    AgentConfig,
-    ContextConfig,
-    ModelOverrides,
-    WindowConfig,
-)
 from ghrah.core.exceptions import RegistryError
 from ghrah.core.server.connection_manager import ConnectionManager
 from ghrah.core.server.event_bus import EventBus
@@ -35,6 +29,12 @@ from ghrah.protocol.types import (
     create_command_result,
     create_error,
     generate_request_id,
+)
+from ghrah.types.config_types import (
+    AgentConfig,
+    ContextConfig,
+    ModelOverrides,
+    WindowConfig,
 )
 
 logger = logging.getLogger(__name__)

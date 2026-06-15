@@ -107,7 +107,8 @@ class SupervisorActor:
             raise RegistryError(f"Agent already registered: {config.name}")
 
         if self._command_sender is not None and config.context is not None:
-            config.context.set_command_sender(self._command_sender, agent_name=config.name)
+            config.context.command_sender = self._command_sender
+            config.context.persistence_agent_name = config.name
 
         supervisor_handle = self
 

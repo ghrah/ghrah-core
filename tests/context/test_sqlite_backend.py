@@ -449,31 +449,34 @@ class TestSqliteBackendConfig:
     """ContextConfig 创建 SqliteBackend 的集成测试。"""
 
     def test_create_sqlite_backend(self, tmp_path: Path) -> None:
-        from ghrah.core.config import ContextConfig
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(
             persistence_type="sqlite",
             persistence_root_dir=str(tmp_path),
             persistence_run_id="config-test",
         )
-        backend = config.create_persistence()
+        backend = create_persistence(config)
         assert isinstance(backend, SqliteBackend)
         assert backend.run_id == "config-test"
 
     def test_create_sqlite_backend_default_path(self) -> None:
-        from ghrah.core.config import ContextConfig
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(
             persistence_type="sqlite",
             persistence_run_id="default-path-test",
         )
-        backend = config.create_persistence()
+        backend = create_persistence(config)
         assert isinstance(backend, SqliteBackend)
         assert "ghrah.db" in str(backend.db_path)
 
     def test_unsupported_persistence_type(self) -> None:
-        from ghrah.core.config import ContextConfig
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(persistence_type="redis")
         with pytest.raises(ValueError, match="Unsupported persistence_type"):
-            config.create_persistence()
+            create_persistence(config)

@@ -24,7 +24,6 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from ghrah.abilities.base import ActionResult
 from ghrah.context.chain import ActionChain
 from ghrah.context.message_store import MessageStore
 from ghrah.context.node import ContextNode
@@ -32,6 +31,7 @@ from ghrah.context.persistence import PersistenceBackend
 from ghrah.context.session import Session
 from ghrah.context.state import StateManager
 from ghrah.context.window import WindowManager
+from ghrah.types.results import ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext

@@ -63,10 +63,15 @@ class RemoteBackend(PersistenceBackend):
         command_sender = router  # MessageRouter 实例
         backend = RemoteBackend(command_sender=command_sender, agent_name="my-agent")
 
-        # 通过 ContextConfig 创建
-        config = ContextConfig(persistence_type="remote")
-        config.set_command_sender(command_sender, agent_name="my-agent")
-        backend = config.create_persistence()
+        # 通过 create_persistence 工厂函数创建
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
+        config = ContextConfig(
+            persistence_type="remote",
+            command_sender=command_sender,
+            persistence_agent_name="my-agent",
+        )
+        backend = create_persistence(config)
     """
 
     def __init__(

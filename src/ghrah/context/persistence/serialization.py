@@ -24,13 +24,13 @@ import warnings
 from datetime import datetime
 from typing import Any
 
-from ghrah.abilities.base import ActionOutcome, ActionResult
 from ghrah.chat.message import ChatMessage
 from ghrah.chat.serialization import (
     deserialize_messages as _chat_deserialize_messages,
 )
 from ghrah.context.node import ContextNode
 from ghrah.context.session import Session
+from ghrah.types.results import ActionOutcome, ActionResult
 
 __all__ = [
     "serialize_node",

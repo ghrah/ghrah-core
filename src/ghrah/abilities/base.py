@@ -14,9 +14,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any
+
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
@@ -27,30 +27,6 @@ __all__ = [
     "ActionResult",
     "Ability",
 ]
-
-
-class ActionOutcome(str, Enum):
-    """Action 执行结果类型。"""
-
-    SUCCESS = "success"
-    FAILURE = "failure"
-    NEEDS_INPUT = "needs_input"  # 需要人工输入（HITL）
-    DELEGATE = "delegate"  # 需要委托给其他 Agent
-
-
-@dataclass
-class ActionResult:
-    """Action 执行结果。
-
-    Attributes:
-        outcome: 执行结果类型
-        data: 结果数据（如工具返回的内容、错误信息等）
-        next_action_hint: 建议的下一个 action 名称，为 None 表示任务完成
-    """
-
-    outcome: ActionOutcome
-    data: dict[str, Any] = field(default_factory=dict)
-    next_action_hint: str | None = None
 
 
 class Ability(ABC):

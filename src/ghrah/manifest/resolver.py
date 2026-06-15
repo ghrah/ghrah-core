@@ -16,7 +16,6 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 
-from ghrah.core.config import AgentConfig, ContextConfig, ModelOverrides, WindowConfig
 from ghrah.manifest.ability import AbilityHooks
 from ghrah.manifest.agent import (
     AbilityRef,
@@ -28,6 +27,7 @@ from ghrah.manifest.builtins import load_all_builtin_manifests
 from ghrah.manifest.errors import ManifestNotFoundError, ManifestValidationError
 from ghrah.manifest.protocols import ManifestStoreProtocol
 from ghrah.manifest.types import ImplementationDef, PermissionFlags, ToolSchema
+from ghrah.types.config_types import AgentConfig, ContextConfig, ModelOverrides, WindowConfig
 
 __all__ = [
     "ResolvedAbility",
