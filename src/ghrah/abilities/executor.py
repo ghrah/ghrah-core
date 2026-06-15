@@ -29,10 +29,9 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ghrah.abilities._utils import ABILITY_PATH_SPECS
-from ghrah.abilities.base import Ability
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.hooks import HookPoint, HookResult
+from ghrah.abilities.paths import ABILITY_PATH_SPECS
 from ghrah.chat.content import ToolCallBlock
 from ghrah.core.ability_protocol import AbilityProtocol
 from ghrah.core.event_publisher import EventPublisher

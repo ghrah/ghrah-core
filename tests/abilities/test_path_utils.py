@@ -9,7 +9,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from ghrah.abilities._utils import extract_paths, is_subpath
+from ghrah.abilities.paths import extract_paths, is_subpath
 
 
 class TestIsSubpath:

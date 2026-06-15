@@ -24,8 +24,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ghrah.abilities._utils import is_subpath
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
+from ghrah.abilities.paths import is_subpath
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext

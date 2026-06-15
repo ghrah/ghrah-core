@@ -68,6 +68,12 @@ from ghrah.abilities.builtin.write_file import WriteFileAbility
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.executor import AbilityExecutor, LocalAbilityExecutor, RemoteAbilityExecutor
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
+from ghrah.abilities.paths import (
+    ABILITY_PATH_SPECS,
+    AbilityPathSpec,
+    extract_paths,
+    is_subpath,
+)
 from ghrah.abilities.registry import AbilityRegistry
 from ghrah.types.results import ActionOutcome, ActionResult
 
@@ -137,4 +143,9 @@ __all__ = [
     "CommandSafetyChecker",
     "CommandApprovalHook",
     "CommandSafetyCategory",
+    # 路径工具模块
+    "is_subpath",
+    "AbilityPathSpec",
+    "ABILITY_PATH_SPECS",
+    "extract_paths",
 ]
