@@ -23,6 +23,7 @@ import pytest
 from _helpers import make_action_result, make_node
 
 from ghrah.abilities.base import ActionOutcome, ActionResult
+from ghrah.chat.factory import ChatMessageFactory
 from ghrah.chat.message import ChatMessage
 from ghrah.context.persistence import (
     JsonFileBackend,
@@ -579,6 +580,7 @@ class TestJsonFileBackendWithContextManager:
             agent_name="test-agent",
             system_prompt="You are a helper.",
             persistence=backend,
+            message_factory=ChatMessageFactory(),
         )
 
         messages_to_add = [

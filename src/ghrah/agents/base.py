@@ -98,31 +98,36 @@ def _build_window_manager(config: WindowConfig) -> WindowManager:
     Returns:
         配置好的 WindowManager 实例
     """
+    from ghrah.chat.factory import ChatMessageFactory
     from ghrah.context.strategies.llm_summary import LLMSummaryStrategy
     from ghrah.context.strategies.sliding_window import SlidingWindowStrategy
     from ghrah.context.strategies.tool_call_fold import ToolCallFoldStrategy
     from ghrah.context.strategies.truncation import TruncationStrategy
 
+    msg_factory = ChatMessageFactory()
+
     strategy_map = {
         "truncation": lambda: TruncationStrategy(),
         "sliding_window": lambda: SlidingWindowStrategy(window_size=config.sliding_window_size),
         "tool_call_fold": lambda: ToolCallFoldStrategy(
-            max_content_length=config.tool_call_max_length
+            max_content_length=config.tool_call_max_length,
+            message_factory=msg_factory,
         ),
-        "llm_summary": lambda: LLMSummaryStrategy(llm=None),  # 需要后续注入 LLM
+        "llm_summary": lambda: LLMSummaryStrategy(llm=None, message_factory=msg_factory),  # 需要后续注入 LLM
     }
 
     strategies = []
     for name in config.strategies:
-        factory = strategy_map.get(name)
-        if factory is not None:
-            strategies.append(factory())
+        factory_fn = strategy_map.get(name)
+        if factory_fn is not None:
+            strategies.append(factory_fn())
         else:
             logger.warning("Unknown window strategy: %s, skipping", name)
 
     return WindowManager(
         strategies=strategies,
         max_tokens=config.max_tokens,
+        message_factory=msg_factory,
     )
 
 
@@ -195,6 +200,9 @@ class ActorAgent:
         if context_config is not None:
             persistence = create_persistence(context_config)
 
+        from ghrah.chat.factory import ChatMessageFactory
+        message_factory = ChatMessageFactory()
+
         self._context_manager = ContextManager(
             agent_name=config.name,
             initial_state={},
@@ -203,6 +211,7 @@ class ActorAgent:
             persistence=persistence,
             snapshot_interval=context_config.snapshot_interval if context_config else 5,
             auto_persist=context_config.auto_persist if context_config else False,
+            message_factory=message_factory,
         )
 
         # 框架级消息历史（Message 对象，使用自有 ChatMessage 格式）
@@ -1316,6 +1325,9 @@ class ActorAgent:
         if self.config.window is not None:
             window_manager = _build_window_manager(self.config.window)
 
+        from ghrah.chat.factory import ChatMessageFactory
+        message_factory = ChatMessageFactory()
+
         context_config = self.config.context
         self._context_manager = ContextManager(
             agent_name=self.config.name,
@@ -1324,6 +1336,7 @@ class ActorAgent:
             window_manager=window_manager,
             snapshot_interval=context_config.snapshot_interval if context_config else 5,
             auto_persist=context_config.auto_persist if context_config else False,
+            message_factory=message_factory,
         )
 
         # 重新写入所有 ability 的默认状态（一次性收集，避免多次 reset）

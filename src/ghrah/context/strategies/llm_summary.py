@@ -20,13 +20,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
-from ghrah.chat.message import ChatMessage
 from ghrah.context.window import WindowStrategy, _split_system_messages, estimate_tokens
-
-if TYPE_CHECKING:
-    from ghrah.chat.format import ChatFormat
+from ghrah.core.window_protocol import (
+    MessageFactory,
+    SummaryLLMProtocol,
+    WindowableMessage,
+)
 
 __all__ = ["LLMSummaryStrategy"]
 
@@ -56,24 +56,27 @@ class LLMSummaryStrategy(WindowStrategy):
     适用场景：长对话场景，需要保留对话语义但减少 token 数。
 
     Args:
-        llm: ChatFormat 实例
+        llm: 满足 SummaryLLMProtocol 的 LLM 实例
         summary_prompt: 摘要提示词（可选，使用默认提示词）
+        message_factory: 消息构造工厂，用于构造摘要消息和 LLM 输入消息
     """
 
     def __init__(
         self,
-        llm: ChatFormat | None = None,
+        llm: SummaryLLMProtocol | None = None,
         summary_prompt: str | None = None,
+        message_factory: MessageFactory | None = None,
     ) -> None:
         self._llm = llm
         self._summary_prompt = summary_prompt or _DEFAULT_SUMMARY_PROMPT
+        self._message_factory = message_factory
 
     @property
     def summary_prompt(self) -> str:
         """摘要提示词。"""
         return self._summary_prompt
 
-    async def apply(self, messages: list[ChatMessage], token_budget: int) -> list[ChatMessage]:
+    async def apply(self, messages: list[WindowableMessage], token_budget: int) -> list[WindowableMessage]:
         """应用 LLM 摘要策略。
 
         Args:
@@ -118,7 +121,7 @@ class LLMSummaryStrategy(WindowStrategy):
             logger.warning("LLM summary failed, falling back to truncation")
             return system_msgs + new_msgs
 
-    def _find_split_index(self, messages: list[ChatMessage], new_budget: int) -> int:
+    def _find_split_index(self, messages: list[WindowableMessage], new_budget: int) -> int:
         """找到分割点：从尾部累积消息直到超过 new_budget。
 
         返回旧消息的结束索引（新消息从 split_index 开始）。
@@ -144,14 +147,14 @@ class LLMSummaryStrategy(WindowStrategy):
 
         return split_index
 
-    async def _generate_summary(self, old_messages: list[ChatMessage]) -> ChatMessage | None:
+    async def _generate_summary(self, old_messages: list[WindowableMessage]) -> WindowableMessage | None:
         """调用 LLM 生成旧消息的摘要。
 
         Args:
             old_messages: 要总结的消息列表
 
         Returns:
-            摘要 ChatMessage(role="system")，失败返回 None
+            摘要消息（role="system"），失败返回 None
         """
         # 格式化旧消息为文本
         conversation_text = self._format_messages_for_summary(old_messages)
@@ -163,21 +166,34 @@ class LLMSummaryStrategy(WindowStrategy):
             logger.warning("LLMSummaryStrategy has no LLM configured, skipping summary")
             return None
 
+        if self._message_factory is None:
+            logger.warning("LLMSummaryStrategy has no message_factory configured, skipping summary")
+            return None
+
         try:
             summary_messages = [
-                ChatMessage.system(text=self._summary_prompt),
-                ChatMessage.user(text_or_blocks=conversation_text),
+                self._message_factory.create_message(
+                    role="system",
+                    text=self._summary_prompt,
+                ),
+                self._message_factory.create_message(
+                    role="user",
+                    text=conversation_text,
+                ),
             ]
             response = await self._llm.generate(summary_messages)
 
             summary_content = response.text or ""
-            return ChatMessage.system(text=_SUMMARY_PREFIX + summary_content)
+            return self._message_factory.create_message(
+                role="system",
+                text=_SUMMARY_PREFIX + summary_content,
+            )
 
         except Exception:
             logger.exception("Failed to generate LLM summary")
             return None
 
-    def _format_messages_for_summary(self, messages: list[ChatMessage]) -> str:
+    def _format_messages_for_summary(self, messages: list[WindowableMessage]) -> str:
         """将消息列表格式化为摘要用的文本。
 
         Args:
@@ -194,11 +210,11 @@ class LLMSummaryStrategy(WindowStrategy):
 
         return "\n".join(lines)
 
-    def _get_role_label(self, msg: ChatMessage) -> str:
+    def _get_role_label(self, msg: WindowableMessage) -> str:
         """获取消息的角色标签。
 
         Args:
-            msg: ChatMessage 对象
+            msg: WindowableMessage 对象
 
         Returns:
             角色标签字符串
@@ -214,17 +230,17 @@ class LLMSummaryStrategy(WindowStrategy):
         elif msg.role == "tool":
             tool_results = msg.tool_results
             if tool_results:
-                name = tool_results[0].name or "unknown"
+                name = getattr(tool_results[0], "name", None) or "unknown"
                 return f"Tool({name})"
             return "Tool"
         else:
             return "Unknown"
 
     @property
-    def llm(self) -> ChatFormat | None:
+    def llm(self) -> SummaryLLMProtocol | None:
         return self._llm
 
-    def set_llm(self, llm: ChatFormat) -> None:
+    def set_llm(self, llm: SummaryLLMProtocol) -> None:
         self._llm = llm
 
     @property

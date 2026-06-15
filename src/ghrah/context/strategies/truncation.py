@@ -12,8 +12,8 @@
 
 from __future__ import annotations
 
-from ghrah.chat.message import ChatMessage
 from ghrah.context.window import WindowStrategy, _split_system_messages, estimate_tokens
+from ghrah.core.window_protocol import WindowableMessage
 
 __all__ = ["TruncationStrategy"]
 
@@ -22,14 +22,14 @@ class TruncationStrategy(WindowStrategy):
     """简单截断策略 — 保留最新消息，丢弃旧的。
 
     行为：
-    - ChatMessage(role="system") 始终保留
+    - role="system" 的消息始终保留
     - 从最旧的非 system 消息开始逐条移除
     - 直到总 token 数 <= token_budget 或只剩 system 消息
 
     适用场景：最终兜底策略，确保消息不超过预算。
     """
 
-    async def apply(self, messages: list[ChatMessage], token_budget: int) -> list[ChatMessage]:
+    async def apply(self, messages: list[WindowableMessage], token_budget: int) -> list[WindowableMessage]:
         """应用截断策略。
 
         Args:

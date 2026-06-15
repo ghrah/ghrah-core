@@ -15,6 +15,7 @@ from _helpers import make_action_result
 
 from ghrah.abilities.base import ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
+from ghrah.chat.factory import ChatMessageFactory
 from ghrah.chat.message import ChatMessage
 from ghrah.context.manager import ContextManager
 from ghrah.context.node import ContextNode
@@ -33,6 +34,7 @@ def _make_cm(**overrides) -> ContextManager:
         "initial_state": None,
         "snapshot_interval": 5,
         "system_prompt": "",
+        "message_factory": ChatMessageFactory(),
     }
     defaults.update(overrides)
     return ContextManager(**defaults)

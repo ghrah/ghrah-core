@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ghrah.context.manager import ContextManager
+    from ghrah.core.window_protocol import ContextManagerProtocol
     from ghrah.types.results import ActionResult
 
 __all__ = ["AbilityExecutionContext"]
@@ -31,7 +31,7 @@ class AbilityExecutionContext:
         current_ability_name: 当前 ability 名称，用于状态作用域隔离
         tool_args: 工具调用参数（从 LLM tool call 解析）
         agent_state: Agent 完整状态的只读视图
-        context_manager: ContextManager 引用（用于状态回写）
+        context_manager: ContextManagerProtocol 引用（用于状态回写）
         current_node_id: 当前链节点 ID
     """
 
@@ -45,7 +45,7 @@ class AbilityExecutionContext:
     agent_state: dict[str, Any] = field(default_factory=dict)
 
     # ContextManager 集成
-    context_manager: ContextManager | None = None
+    context_manager: ContextManagerProtocol | None = None
     current_node_id: str | None = None
 
     # 集群通信支持

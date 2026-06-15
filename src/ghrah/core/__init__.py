@@ -40,12 +40,27 @@ from ghrah.core.exceptions import (
 )
 from ghrah.core.hitl import HITLFutureStore, HITLResult
 from ghrah.core.message import Message, MessageType
+from ghrah.core.window_protocol import (
+    ContextManagerProtocol,
+    MessageFactory,
+    SummaryLLMProtocol,
+    SummaryResponseProtocol,
+    WindowableBlock,
+    WindowableMessage,
+)
 
 __all__ = [
     # 协议
     "AbilityProtocol",
     "ExecutorProtocol",
     "RegistryProtocol",
+    # 窗口协议
+    "WindowableBlock",
+    "WindowableMessage",
+    "MessageFactory",
+    "SummaryLLMProtocol",
+    "SummaryResponseProtocol",
+    "ContextManagerProtocol",
     # 事件
     "ActionChainUpdatedEvent",
     "AgentErrorEvent",

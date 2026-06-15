@@ -95,6 +95,7 @@ def create_rebased_context(
         system_prompt=system_prompt,
         persistence=source_cm.persistence,
         auto_persist=source_cm.auto_persist,
+        message_factory=source_cm._message_factory,
     )
 
     # 5. 继承消息到子 CM

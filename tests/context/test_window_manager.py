@@ -8,9 +8,13 @@
 - estimate_tokens / estimate_message_tokens
 - WindowManager 策略组合器
 - _split_system_messages 辅助函数
+- WindowableMessage Protocol 兼容性（mock 消息独立测试）
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
@@ -62,6 +66,105 @@ def _ai_with_tool_calls(content: str = "") -> ChatMessage:
 
 def _tool(content: str = "result", tool_call_id: str = "tc1") -> ChatMessage:
     return ChatMessage.tool(tool_call_id=tool_call_id, content=content)
+
+
+# ----------------------------------------------------------------
+# Mock WindowableMessage（独立于 ChatMessage 测试）
+# ----------------------------------------------------------------
+
+
+@dataclass
+class MockBlock:
+    """满足 WindowableBlock Protocol 的 mock block。"""
+    type: str
+    _text: str = ""
+    _arguments: dict[str, Any] | None = None
+    _name: str = ""
+    _content: str = ""
+    _base64: str | None = None
+    _url: str | None = None
+    _data: str = ""
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @property
+    def arguments(self) -> dict[str, Any]:
+        return self._arguments or {}
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def content(self) -> str:
+        return self._content
+
+    @property
+    def base64(self) -> str | None:
+        return self._base64
+
+    @property
+    def url(self) -> str | None:
+        return self._url
+
+    @property
+    def data(self) -> str:
+        return self._data
+
+
+@dataclass
+class MockMessage:
+    """满足 WindowableMessage Protocol 的 mock 消息。"""
+    role: str
+    _content_blocks: list[MockBlock] = field(default_factory=list)
+    _text: str = ""
+    _source: str | None = None
+    _metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def content_blocks(self) -> list[MockBlock]:
+        return self._content_blocks
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return any(b.type == "tool_call" for b in self._content_blocks)
+
+    @property
+    def tool_results(self) -> list[MockBlock]:
+        return [b for b in self._content_blocks if b.type == "tool_result"]
+
+    @property
+    def source(self) -> str | None:
+        return self._source
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self._metadata
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"role": self.role, "text": self._text}
+
+
+def _mock_sys(text: str = "system") -> MockMessage:
+    return MockMessage(
+        role="system",
+        _content_blocks=[MockBlock(type="text", _text=text)],
+        _text=text,
+    )
+
+
+def _mock_human(text: str = "hello") -> MockMessage:
+    return MockMessage(
+        role="user",
+        _content_blocks=[MockBlock(type="text", _text=text)],
+        _text=text,
+    )
 
 
 # ----------------------------------------------------------------
@@ -158,6 +261,40 @@ class TestTokenEstimation:
         assert tokens > 0
 
 
+class TestTokenEstimationWithMock:
+    """使用 MockMessage 测试 token 估算（脱离 ChatMessage 依赖）。"""
+
+    def test_estimate_mock_text_message(self) -> None:
+        """MockMessage 的 token 估算。"""
+        msg = _mock_human("a" * 100)
+        tokens = estimate_message_tokens(msg)
+        assert tokens == 25  # 100 / 4
+
+    def test_estimate_mock_empty_message(self) -> None:
+        """空 MockMessage 至少 1 token。"""
+        msg = _mock_human("")
+        tokens = estimate_message_tokens(msg)
+        assert tokens >= 1
+
+    def test_estimate_mock_multiple_messages(self) -> None:
+        """多条 MockMessage 的 token 累加。"""
+        messages = [
+            _mock_human("a" * 40),
+            _mock_human("b" * 80),
+        ]
+        total = estimate_tokens(messages)
+        assert total == 30  # 10 + 20
+
+    def test_estimate_plain_object_fallback(self) -> None:
+        """普通对象（无 WindowableMessage）的降级估算。"""
+        class SimpleObj:
+            text = "hello world"
+
+        obj = SimpleObj()
+        tokens = estimate_message_tokens(obj)
+        assert tokens >= 1
+
+
 # ----------------------------------------------------------------
 # TestSplitSystemMessages
 # ----------------------------------------------------------------
@@ -194,6 +331,14 @@ class TestSplitSystemMessages:
         sys, other = _split_system_messages([])
         assert sys == []
         assert other == []
+
+    def test_mixed_with_mock_messages(self) -> None:
+        """MockMessage 也能正确分离。"""
+        msgs = [_mock_sys("sys"), _mock_human("hi")]
+        sys, other = _split_system_messages(msgs)
+        assert len(sys) == 1
+        assert len(other) == 1
+        assert sys[0].role == "system"
 
 
 # ----------------------------------------------------------------
@@ -312,3 +457,16 @@ class TestWindowManager:
         strategies = wm.strategies
         strategies.append(ReverseStrategy())
         assert len(wm.strategies) == 1
+
+    def test_message_factory_property(self) -> None:
+        """message_factory 属性可设置和读取。"""
+        wm = WindowManager()
+        assert wm.message_factory is None
+
+    @pytest.mark.asyncio
+    async def test_apply_with_mock_messages(self) -> None:
+        """使用 MockMessage（满足 WindowableMessage Protocol）也能正确工作。"""
+        msgs = [_mock_sys("sys"), _mock_human("hi")]
+        wm = WindowManager()
+        result = await wm.apply(msgs)
+        assert len(result) == 2

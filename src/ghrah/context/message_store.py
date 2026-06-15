@@ -18,8 +18,7 @@
 from __future__ import annotations
 
 import copy
-
-from ghrah.chat.message import ChatMessage
+from typing import Any
 
 __all__ = ["MessageStore"]
 
@@ -33,13 +32,13 @@ class MessageStore:
     """
 
     def __init__(self, snapshot_interval: int = 5) -> None:
-        self._messages: list[ChatMessage] = []
+        self._messages: list[Any] = []
         self._snapshot_interval = snapshot_interval
-        self._last_snapshot: list[ChatMessage] | None = None
+        self._last_snapshot: list[Any] | None = None
         self._last_snapshot_iteration: int | None = None
 
     @property
-    def current_messages(self) -> list[ChatMessage]:
+    def current_messages(self) -> list[Any]:
         """返回当前完整消息列表的副本。"""
         return list(self._messages)
 
@@ -52,7 +51,7 @@ class MessageStore:
         return len(self._messages)
 
     @property
-    def last_snapshot(self) -> list[ChatMessage] | None:
+    def last_snapshot(self) -> list[Any] | None:
         """上一次快照的完整消息（副本），无快照则返回 None。"""
         if self._last_snapshot is None:
             return None
@@ -68,23 +67,23 @@ class MessageStore:
         """快照间隔配置。"""
         return self._snapshot_interval
 
-    def append(self, message: ChatMessage) -> None:
+    def append(self, message: Any) -> None:
         """追加单条消息。
 
         Args:
-            message: ChatMessage 对象
+            message: 消息对象
         """
         self._messages.append(message)
 
-    def extend(self, messages: list[ChatMessage]) -> None:
+    def extend(self, messages: list[Any]) -> None:
         """追加多条消息。
 
         Args:
-            messages: ChatMessage 列表
+            messages: 消息列表
         """
         self._messages.extend(messages)
 
-    def compute_delta_since_last_snapshot(self) -> list[ChatMessage]:
+    def compute_delta_since_last_snapshot(self) -> list[Any]:
         """计算当前消息相对于内部 _last_snapshot 的增量。
 
         使用内部 _last_snapshot（引用匹配），确保前缀比较成功。
@@ -96,7 +95,7 @@ class MessageStore:
             return list(self._messages)
         return self.compute_delta_since(self._last_snapshot)
 
-    def compute_delta_since(self, snapshot: list[ChatMessage]) -> list[ChatMessage]:
+    def compute_delta_since(self, snapshot: list[Any]) -> list[Any]:
         """计算当前消息相对于 snapshot 的增量。
 
         使用引用比较（is）确定 snapshot 在当前列表中的结束位置。
@@ -150,7 +149,7 @@ class MessageStore:
             return False
         return iteration % self._snapshot_interval == 0
 
-    def take_snapshot(self, iteration: int) -> list[ChatMessage]:
+    def take_snapshot(self, iteration: int) -> list[Any]:
         """创建并返回当前完整消息的深拷贝，同时更新内部快照记录。
 
         内部 _last_snapshot 存储 _messages 的浅拷贝（引用，用于
@@ -169,7 +168,7 @@ class MessageStore:
         # 返回深拷贝给调用者（外部安全）
         return copy.deepcopy(self._messages)
 
-    def rebuild_from(self, snapshot: list[ChatMessage], deltas: list[list[ChatMessage]]) -> None:
+    def rebuild_from(self, snapshot: list[Any], deltas: list[list[Any]]) -> None:
         """从快照 + delta 列表重建完整消息。
 
         典型场景：从持久化恢复或从某个历史快照节点重建。
@@ -183,7 +182,7 @@ class MessageStore:
             self._messages.extend(delta)
         self._last_snapshot = list(snapshot)
 
-    def replace_messages(self, messages: list[ChatMessage]) -> None:
+    def replace_messages(self, messages: list[Any]) -> None:
         """替换当前完整消息列表。
 
         用于向后兼容场景（如 property setter 代理）。

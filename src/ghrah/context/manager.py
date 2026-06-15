@@ -31,6 +31,7 @@ from ghrah.context.persistence import PersistenceBackend
 from ghrah.context.session import Session
 from ghrah.context.state import StateManager
 from ghrah.context.window import WindowManager
+from ghrah.core.window_protocol import MessageFactory
 from ghrah.types.results import ActionResult
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ class ContextManager:
         window_manager: WindowManager | None = None,
         persistence: PersistenceBackend | None = None,
         auto_persist: bool = False,
+        message_factory: MessageFactory | None = None,
     ) -> None:
         self._agent_name = agent_name
         self._chain = ActionChain(agent_name)
@@ -86,6 +88,7 @@ class ContextManager:
         self._window_manager = window_manager
         self._persistence = persistence
         self._auto_persist = auto_persist
+        self._message_factory = message_factory
         self._pending_messages: list[Any] = []
         self._in_iteration: bool = False
         self._persist_tasks: set[asyncio.Task[Any]] = set()
@@ -103,9 +106,12 @@ class ContextManager:
         # 初始化链：创建根节点
         initial_messages: list[Any] = []
         if system_prompt:
-            from ghrah.chat.message import ChatMessage
-
-            msg = ChatMessage.system(text=system_prompt)
+            if message_factory is None:
+                raise ValueError(
+                    "message_factory is required when system_prompt is provided. "
+                    "Pass a MessageFactory instance (e.g. ChatMessageFactory())."
+                )
+            msg = message_factory.create_message(role="system", text=system_prompt)
             initial_messages.append(msg)
             self._message_store.append(msg)
 

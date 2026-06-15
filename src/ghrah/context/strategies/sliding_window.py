@@ -12,8 +12,8 @@
 
 from __future__ import annotations
 
-from ghrah.chat.message import ChatMessage
 from ghrah.context.window import WindowStrategy, _split_system_messages
+from ghrah.core.window_protocol import WindowableMessage
 
 __all__ = ["SlidingWindowStrategy"]
 
@@ -22,7 +22,7 @@ class SlidingWindowStrategy(WindowStrategy):
     """滑动窗口策略 — 保留最近 N 条消息。
 
     行为：
-    - ChatMessage(role="system") 不计入窗口大小，始终保留
+    - role="system" 的消息不计入窗口大小，始终保留
     - 保留最近 window_size 条非 system 消息
     - 如果非 system 消息数 <= window_size，不做任何操作
 
@@ -42,7 +42,7 @@ class SlidingWindowStrategy(WindowStrategy):
         """窗口大小。"""
         return self._window_size
 
-    async def apply(self, messages: list[ChatMessage], token_budget: int) -> list[ChatMessage]:
+    async def apply(self, messages: list[WindowableMessage], token_budget: int) -> list[WindowableMessage]:
         """应用滑动窗口策略。
 
         Args:
