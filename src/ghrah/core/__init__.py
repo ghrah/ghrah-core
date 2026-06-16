@@ -35,6 +35,7 @@ from ghrah.core.exceptions import (
     ToolError,
 )
 from ghrah.core.hitl import HITLFutureStore, HITLResult
+from ghrah.core.llm_protocol import LLMProtocol, LLMResponseProtocol
 from ghrah.core.message import Message, MessageType
 from ghrah.core.supervisor_protocol import SupervisorProtocol
 from ghrah.core.window_protocol import (
@@ -62,6 +63,9 @@ __all__ = [
     "SummaryLLMProtocol",
     "SummaryResponseProtocol",
     "ContextManagerProtocol",
+    # LLM 协议
+    "LLMProtocol",
+    "LLMResponseProtocol",
     # 事件
     "ActionChainUpdatedEvent",
     "AgentErrorEvent",

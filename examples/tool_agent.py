@@ -33,7 +33,7 @@ from ghrah.abilities.builtin.conversation import ConversationAbility
 from ghrah.abilities.builtin.end_task import EndTaskAbility
 from ghrah.abilities.builtin.read_file import ReadFileAbility
 from ghrah.abilities.context import AbilityExecutionContext
-from ghrah.agents.base import ActorAgent
+from ghrah.agents.builder import AgentBuilder
 from ghrah.communication import SupervisorActor
 from ghrah.core.config import AgentConfig
 
@@ -55,16 +55,10 @@ async def demo_manual_registration() -> None:
         system_prompt="你是一个文件助手。用户可以让你读取文件内容。",
     )
 
-    agent = ActorAgent(config)
-
-    # 手动注册 Ability（组合模式 — 按需注册）
-    read_file = ReadFileAbility()
-    conversation = ConversationAbility()
-    end_task = EndTaskAbility()
-
-    agent.register_ability(read_file)
-    agent.register_ability(conversation)
-    agent.register_ability(end_task)
+    agent = AgentBuilder.from_config(
+        config,
+        abilities=[ReadFileAbility(), ConversationAbility(), EndTaskAbility()],
+    )
 
     # 查看注册结果
     abilities = agent.get_abilities()
@@ -106,12 +100,10 @@ async def demo_custom_ability() -> None:
         description="代码审查 Agent",
     )
 
-    agent = ActorAgent(config)
-
-    # 注册自定义 Ability
-    agent.register_ability(CodeReviewAbility())
-    agent.register_ability(ConversationAbility())
-    agent.register_ability(EndTaskAbility())
+    agent = AgentBuilder.from_config(
+        config,
+        abilities=[CodeReviewAbility(), ConversationAbility(), EndTaskAbility()],
+    )
 
     abilities = agent.get_abilities()
     print(f"  已注册 Ability: {abilities}")

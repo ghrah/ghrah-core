@@ -17,9 +17,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ghrah.abilities.builtin.conversation import ConversationAbility
-from ghrah.abilities.builtin.end_task import EndTaskAbility
-from ghrah.agents.base import ActorAgent
+from ghrah.agents.builder import AgentBuilder
 from ghrah.communication.errors import (
     AgentNotFoundError,
     RegistryError,
@@ -112,31 +110,32 @@ class SupervisorActor:
 
         supervisor_handle = self
 
-        # 创建 ActorAgent 并注入 Supervisor 引用
-        actor_handle = ActorAgent(config, supervisor_handle)
+        # 构建默认 Ability 列表
+        if abilities is None:
+            from ghrah.abilities.builtin.conversation import ConversationAbility
+            from ghrah.abilities.builtin.end_task import EndTaskAbility
 
-        # 注册 Ability
-        if abilities is not None:
-            # 用户指定了 Ability 列表
-            for ability in abilities:
-                actor_handle.register_ability(ability)
+            abilities = [ConversationAbility(), EndTaskAbility()]
+            logger.info(
+                "Supervisor auto-registered %d default abilities for agent: %s — abilities=%s",
+                len(abilities),
+                config.name,
+                [a.name for a in abilities],
+            )
+        else:
             logger.info(
                 "Supervisor registered %d user-provided abilities for agent: %s — abilities=%s",
                 len(abilities),
                 config.name,
                 [a.name for a in abilities],
             )
-        else:
-            # 注册默认基础 Ability 组合
-            default_abilities: list[AbilityProtocol] = [ConversationAbility(), EndTaskAbility()]
-            for ability in default_abilities:
-                actor_handle.register_ability(ability)
-            logger.info(
-                "Supervisor auto-registered %d default abilities for agent: %s — abilities=%s",
-                len(default_abilities),
-                config.name,
-                [a.name for a in default_abilities],
-            )
+
+        # 通过 AgentBuilder 创建 ActorAgent
+        actor_handle = AgentBuilder.from_config(
+            config=config,
+            abilities=abilities,
+            supervisor=supervisor_handle,
+        )
 
         self._registry.register(
             name=config.name,

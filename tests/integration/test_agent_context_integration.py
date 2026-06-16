@@ -116,9 +116,9 @@ def _create_agent(
     config: AgentConfig | None = None,
 ) -> Any:
     """创建 ActorAgent 实例。"""
-    from ghrah.agents.base import ActorAgent
+    from ghrah.agents.builder import AgentBuilder
 
-    agent = ActorAgent(config or AgentConfig(name="test-agent"))
+    agent = AgentBuilder.from_config(config or AgentConfig(name="test-agent"))
     return agent
 
 

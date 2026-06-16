@@ -5,11 +5,15 @@
 """ActorAgent 基类：Actor + Ability 组合 + Hook 驱动循环 + ContextManager 集成。
 
 每个 ActorAgent 是一个 Agent Actor，内部持有：
-- ChatFormat（通过 agentconf 配置惰性创建）
+- LLMProtocol（通过 llm_factory 回调惰性创建）
 - 已注册的 Ability 集合（组合模式）
 - 绑定的 tool schema（从 Ability.bind_tool() 收集）
-- ContextManager（上下文管理：消息历史、状态、链式历史、窗口管理、驱动循环控制状态）
-- AbilityExecutor（Ability 执行器，将执行与 Agent 循环解耦）
+- ContextManager（注入，上下文管理：消息历史、状态、链式历史、窗口管理、驱动循环控制状态）
+- AbilityExecutor（注入，Ability 执行器，将执行与 Agent 循环解耦）
+
+构造方式：
+    推荐使用 AgentBuilder.from_config() 便捷创建（零配置默认注入），
+    或直接调用 ActorAgent(...) 注入所有依赖（纯 DI，适合测试）。
 
 Hook:
     三层 Hook 架构：
@@ -21,7 +25,7 @@ Hook:
 AbilityExecutor:
     - AbilityExecutor 接口将 Ability 执行从 Agent 循环中解耦
     - LocalAbilityExecutor：单体模式，在 Core 端本地执行 Ability + HITL
-    - RemoteAbilityExecutor（待实现）：分布式模式，将执行委托给 Subject
+    - RemoteAbilityExecutor：分布式模式，将执行委托给 Subject
 
 ContextManager:
     - ContextManager 统一管理消息、状态、链式历史和驱动循环控制状态
@@ -35,35 +39,20 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+from collections.abc import Callable
 from typing import Any
 
-from ghrah.abilities.base import Ability
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.errors import AbilityNotFoundError
-from ghrah.abilities.executor import (
-    AbilityExecutor,
-    LocalAbilityExecutor,
-    RemoteAbilityExecutor,
-)
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import block_to_dict
-from ghrah.chat.format import ChatFormat, LLMResponse
 from ghrah.chat.message import ChatMessage
-from ghrah.chat.response import (
-    extract_reasoning_content,
-    extract_response_metadata,
-    extract_token_usage,
-)
 from ghrah.context.manager import ContextManager
-from ghrah.context.persistence import create_persistence
-from ghrah.context.persistence.serialization import serialize_node
 from ghrah.context.session import Session
-from ghrah.context.window import WindowManager
-from ghrah.core.ability_protocol import AbilityProtocol
+from ghrah.core.ability_protocol import AbilityProtocol, ExecutorProtocol
 from ghrah.core.event_publisher import (
     EventPublisher,
     NullEventPublisher,
-    ServerEventPublisher,
 )
 from ghrah.core.events import (
     ActionChainUpdatedEvent,
@@ -79,140 +68,67 @@ from ghrah.core.exceptions import (
     AgentInitializationError,
     HookError,
 )
+from ghrah.core.llm_protocol import LLMProtocol, LLMResponseProtocol
 from ghrah.core.message import Message, MessageType
-from ghrah.llm.factory import LLMFactory
-from ghrah.types.config_types import AgentConfig, WindowConfig
+from ghrah.types.config_types import AgentConfig
 from ghrah.types.results import ActionOutcome, ActionResult
 
 logger = logging.getLogger(__name__)
-
-
-def _build_window_manager(config: WindowConfig) -> WindowManager:
-    """从 WindowConfig 构建 WindowManager 实例。
-
-    根据配置中的策略名称列表，创建对应的策略实例并组合到 WindowManager 中。
-
-    Args:
-        config: 窗口管理配置
-
-    Returns:
-        配置好的 WindowManager 实例
-    """
-    from ghrah.chat.factory import ChatMessageFactory
-    from ghrah.context.strategies.llm_summary import LLMSummaryStrategy
-    from ghrah.context.strategies.sliding_window import SlidingWindowStrategy
-    from ghrah.context.strategies.tool_call_fold import ToolCallFoldStrategy
-    from ghrah.context.strategies.truncation import TruncationStrategy
-
-    msg_factory = ChatMessageFactory()
-
-    strategy_map = {
-        "truncation": lambda: TruncationStrategy(),
-        "sliding_window": lambda: SlidingWindowStrategy(window_size=config.sliding_window_size),
-        "tool_call_fold": lambda: ToolCallFoldStrategy(
-            max_content_length=config.tool_call_max_length,
-            message_factory=msg_factory,
-        ),
-        "llm_summary": lambda: LLMSummaryStrategy(llm=None, message_factory=msg_factory),  # 需要后续注入 LLM
-    }
-
-    strategies = []
-    for name in config.strategies:
-        factory_fn = strategy_map.get(name)
-        if factory_fn is not None:
-            strategies.append(factory_fn())
-        else:
-            logger.warning("Unknown window strategy: %s, skipping", name)
-
-    return WindowManager(
-        strategies=strategies,
-        max_tokens=config.max_tokens,
-        message_factory=msg_factory,
-    )
 
 
 class ActorAgent:
     """基于 Ability 组合的 Agent Actor。
 
     生命周期:
-        1. __init__ 接收 AgentConfig，创建 ContextManager
-        2. 首次调用 _ensure_llm() 时，从 agentconf 读取配置并创建 ChatModel
+        1. __init__ 接收注入的依赖（ContextManager, AbilityExecutor 等）
+        2. 首次调用 _ensure_llm() 时，通过 llm_factory 回调创建 LLM
         3. 通过 register_ability() 注册能力（含 bind_tool 收集）
         4. receive() 触发驱动循环：ability 选择 → hook 时序 → 执行 → 条件转移
 
         - 所有消息和状态通过 ContextManager 管理
         - 驱动循环控制状态（iteration, max_iterations 等）由 ContextManager 管理
+        - AbilityExecutionContext 只保留 Ability 执行所需的最少信息
 
     用法:
-        # 创建 Agent
-        config = AgentConfig(name="code-reviewer")
-        agent = ActorAgent(config)
+        # 推荐使用 AgentBuilder 便捷创建
+        agent = AgentBuilder.from_config(config, abilities=[ConversationAbility()])
 
-        # 注册能力
-        await agent.register_ability(ConversationAbility())
-
-        # 发送消息（触发驱动循环）
-        response = await agent.receive(Message(
-            sender="user",
-            recipient="code-reviewer",
-            content="请帮我审查这段代码",
-        ))
+        # 或直接依赖注入（适合测试）
+        agent = ActorAgent(
+            config=config,
+            context_manager=context_manager,
+            ability_executor=executor,
+            context_manager_factory=lambda: context_manager,
+        )
     """
 
     def __init__(
         self,
         config: AgentConfig,
+        context_manager: ContextManager,
+        ability_executor: ExecutorProtocol,
+        context_manager_factory: Callable[[], ContextManager],
         supervisor: Any = None,
-        ability_executor: AbilityExecutor | None = None,
+        event_publisher: EventPublisher | None = None,
+        llm_factory: Callable[[AgentConfig], LLMProtocol] | None = None,
     ) -> None:
         self.config = config
         self._supervisor = supervisor
-        self._llm: ChatFormat | None = None
+        self._context_manager = context_manager
+        self._context_manager_factory = context_manager_factory
+        self._ability_executor = ability_executor
+        self._event_publisher = event_publisher or NullEventPublisher()
+        self._llm: LLMProtocol | None = None
+        self._llm_factory = llm_factory
         self._initialized = False
         self._abilities: dict[str, AbilityProtocol] = {}
         self._bound_tools: list[dict[str, Any]] = []
         self._all_hooks: list[Hook] = []
-        self._event_publisher: EventPublisher = NullEventPublisher()
         self._message_queue: asyncio.Queue[ChatMessage] = asyncio.Queue()
-
-        if ability_executor is not None:
-            self._ability_executor = ability_executor
-        else:
-            self._ability_executor = LocalAbilityExecutor(
-                agent_name=config.name,
-                hooks=self._all_hooks,
-                event_publisher=self._event_publisher,
-                workspace_root=config.workspace_root,
-            )
 
         # ────── 分布式模式：由 SupervisorActor 后置注入 ──────
         self._command_sender: Any = None
         self._event_bus: Any = None
-
-        # 创建 ContextManager
-        window_manager = None
-        if config.window is not None:
-            window_manager = _build_window_manager(config.window)
-
-        context_config = config.context
-
-        persistence = None
-        if context_config is not None:
-            persistence = create_persistence(context_config)
-
-        from ghrah.chat.factory import ChatMessageFactory
-        message_factory = ChatMessageFactory()
-
-        self._context_manager = ContextManager(
-            agent_name=config.name,
-            initial_state={},
-            system_prompt=config.system_prompt,
-            window_manager=window_manager,
-            persistence=persistence,
-            snapshot_interval=context_config.snapshot_interval if context_config else 5,
-            auto_persist=context_config.auto_persist if context_config else False,
-            message_factory=message_factory,
-        )
 
         # 框架级消息历史（Message 对象，使用自有 ChatMessage 格式）
         # ContextManager 管理 ChatMessage 消息，这里保留框架 Message 对象的记录
@@ -231,6 +147,9 @@ class ActorAgent:
             command_sender: CommandSender 实例（通常为 MessageRouter）
             event_bus: EventBus 实例，用于发布事件
         """
+        from ghrah.abilities.executor import LocalAbilityExecutor, RemoteAbilityExecutor
+        from ghrah.core.event_publisher import ServerEventPublisher
+
         self._command_sender = command_sender
         self._event_bus = event_bus
 
@@ -426,10 +345,10 @@ class ActorAgent:
     # LLM 初始化
     # ----------------------------------------------------------------
 
-    async def _ensure_llm(self) -> ChatFormat:
+    async def _ensure_llm(self) -> LLMProtocol:
         """惰性初始化 LLM 客户端。
 
-        从 agentconf 读取配置 → LLMFactory 创建 ChatFormat。
+        通过 llm_factory 回调创建 LLM 实例。
         采用惰性初始化避免进程间序列化问题。
 
         使用 config.effective_agent_config_name 查找 agentconf 配置，
@@ -442,41 +361,34 @@ class ActorAgent:
         if self._llm is not None:
             return self._llm
 
-        agent_config_name = self.config.effective_agent_config_name
+        if self._llm_factory is None:
+            raise AgentInitializationError(
+                agent_name=self.config.name,
+                message="No llm_factory provided; cannot initialize LLM",
+            )
 
         try:
-            from agentconf import AgentsConfig
+            self._llm = self._llm_factory(self.config)
 
-            config_client = AgentsConfig()
-            resolved = config_client.resolve_agent(agent_config_name)
-            self._llm = LLMFactory.create(resolved)
-
-            # Phase 1: 绑定已注册的 tools，使 LLM 能在响应中返回 tool_calls
             if self._bound_tools:
                 self._llm.configure_tools(self._bound_tools)
-
-            # Manifest 模型配置覆盖（优先级高于 agentconf）
-            if self.config.model_overrides is not None:
-                self._llm.apply_model_overrides(self.config.model_overrides)
 
             self._inject_llm_into_summary_strategy(self._llm)
 
             self._initialized = True
 
             logger.info(
-                f"ActorAgent[{self.config.name}] LLM initialized from config "
-                f"'{agent_config_name}': {type(self._llm).__name__}"
+                f"ActorAgent[{self.config.name}] LLM initialized: {self._llm.model}"
             )
             return self._llm
 
         except Exception as e:
             raise AgentInitializationError(
                 agent_name=self.config.name,
-                message=f"Failed to initialize LLM from agentconf "
-                f"(config_name='{agent_config_name}'): {e}",
+                message=f"Failed to initialize LLM: {e}",
             ) from e
 
-    def _inject_llm_into_summary_strategy(self, llm: ChatFormat) -> None:
+    def _inject_llm_into_summary_strategy(self, llm: LLMProtocol) -> None:
         from ghrah.context.strategies.llm_summary import LLMSummaryStrategy
 
         wm = self._context_manager._window_manager
@@ -544,6 +456,8 @@ class ActorAgent:
             head_node = self._context_manager.chain.head
             if head_node is not None:
                 try:
+                    from ghrah.context.persistence.serialization import serialize_node
+
                     await self._event_publisher.publish(
                         ActionChainUpdatedEvent(
                             agent_name=self.config.name,
@@ -651,6 +565,8 @@ class ActorAgent:
                 # ────── 发布 ActionChainUpdated 事件 ──────
                 # NOTE: 性能优化点 — 当前传输完整序列化 node，
                 # 后续可改为仅传输 delta 数据以减少序列化/反序列化开销。
+                from ghrah.context.persistence.serialization import serialize_node
+
                 await self._event_publisher.publish(
                     ActionChainUpdatedEvent(
                         agent_name=self.config.name,
@@ -749,9 +665,15 @@ class ActorAgent:
 
         # 2. 调用 LLM
         messages = await cm.get_llm_messages()
-        llm_response: LLMResponse = await llm.generate(messages)
+        llm_response: LLMResponseProtocol = await llm.generate(messages)
 
         # 2.5 提取 LLM 响应 metadata
+        from ghrah.chat.response import (
+            extract_reasoning_content,
+            extract_response_metadata,
+            extract_token_usage,
+        )
+
         token_usage = extract_token_usage(llm_response)
         cot_content = extract_reasoning_content(llm_response)
         resp_meta = extract_response_metadata(llm_response)
@@ -832,29 +754,6 @@ class ActorAgent:
                 cm.add_messages(tool_messages)
 
         return {"results": results, "llm_metadata": llm_meta}
-
-    async def _execute_single_ability(
-        self, ability: Ability, tool_args: dict[str, Any], accumulated_data: dict[str, Any]
-    ) -> dict:
-        """执行单个 ability — 委托给 AbilityExecutor。
-
-        为每个 ability 创建独立的 AbilityExecutionContext，
-        避免并行执行时的状态污染。
-
-        Args:
-            ability: 要执行的 ability 实例
-            tool_args: 工具调用参数
-            accumulated_data: 累积数据
-
-        Returns:
-            dict 包含 "ability_name" 和 "action_result"
-        """
-        per_ability_context = self._build_ability_context(ability.name, tool_args, accumulated_data)
-
-        # 委托给 AbilityExecutor 执行（包含 PRE/POST_EXECUTE Hook 和 HITL 处理）
-        action_result = await self._ability_executor.execute_ability(ability, per_ability_context)
-
-        return {"ability_name": ability.name, "action_result": action_result}
 
     async def _execute_routed_ability(
         self, accumulated_data: dict[str, Any], ability_name: str
@@ -1320,24 +1219,8 @@ class ActorAgent:
         # 清空消息队列
         self._message_queue = asyncio.Queue()
 
-        # 重建 ContextManager
-        window_manager = None
-        if self.config.window is not None:
-            window_manager = _build_window_manager(self.config.window)
-
-        from ghrah.chat.factory import ChatMessageFactory
-        message_factory = ChatMessageFactory()
-
-        context_config = self.config.context
-        self._context_manager = ContextManager(
-            agent_name=self.config.name,
-            initial_state={},
-            system_prompt=self.config.system_prompt,
-            window_manager=window_manager,
-            snapshot_interval=context_config.snapshot_interval if context_config else 5,
-            auto_persist=context_config.auto_persist if context_config else False,
-            message_factory=message_factory,
-        )
+        # 重建 ContextManager（通过注入的 factory 回调）
+        self._context_manager = self._context_manager_factory()
 
         # 重新写入所有 ability 的默认状态（一次性收集，避免多次 reset）
         default_states: dict[str, dict[str, Any]] = {}
