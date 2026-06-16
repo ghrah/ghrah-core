@@ -479,8 +479,13 @@ class MessageRouter:
     def _create_ability_from_def(self, ability_def: Any) -> AbilityProtocol:
         """将 AbilityDefinitionPayload 转换为 Ability 实例。
 
-        处理文件系统类 Ability 的权限参数，将 require_hitl/allowed_paths/denied_paths
-        等原始字段转换为 FSPermissionChecker 后再传入构造函数。
+        处理两类 Ability 的参数转换：
+        1. 文件系统类（read/write/list/edit/move/delete_file）：将
+           require_hitl/allowed_paths/denied_paths 等原始字段转换为
+           FSPermissionChecker 后再传入构造函数。
+        2. execute_command：将 require_approval 标记转换为
+           CommandSafetyChecker + CommandApprovalHook 注入构造函数，
+           确保 HITL 在安全分类下生效。
         """
         from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
         from ghrah.abilities.registry import AbilityRegistry
@@ -488,7 +493,10 @@ class MessageRouter:
         params = dict(ability_def.params) if ability_def.params else {}
         ability_type = ability_def.ability_type
 
-        _fs_ability_types = {"read_file", "write_file", "list_directory"}
+        _fs_ability_types = {
+            "read_file", "write_file", "list_directory",
+            "edit_file", "move_file", "delete_file",
+        }
         _fs_permission_keys = {"require_hitl", "allowed_paths", "denied_paths", "workspace_root"}
 
         if ability_type in _fs_ability_types and _fs_permission_keys & set(params.keys()):
@@ -504,6 +512,18 @@ class MessageRouter:
                 require_approval=require_hitl if isinstance(require_hitl, bool) else True,
             )
             params["permission_checker"] = checker
+
+        if ability_type == "execute_command":
+            from ghrah.abilities.builtin.command_safety import (
+                CommandApprovalHook,
+                CommandSafetyChecker,
+            )
+            require_approval = params.pop("require_approval", True)
+            command_checker = CommandSafetyChecker(
+                require_approval=bool(require_approval)
+            )
+            params["command_checker"] = command_checker
+            params["hooks"] = [CommandApprovalHook(command_checker)]
 
         return AbilityRegistry.create(ability_type, **params)
 
