@@ -18,7 +18,7 @@ import logging
 
 from ghrah.abilities.builtin.conversation import ConversationAbility
 from ghrah.agents.builder import AgentBuilder
-from ghrah.core.config import AgentConfig
+from ghrah.types.config_types import AgentConfig
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -33,7 +33,6 @@ from ghrah.abilities.builtin import (
     ReadFileAbility,
     WriteFileAbility,
 )
-from ghrah.core.config import AgentConfig
 from ghrah.manifest.ability import AbilityManifest
 from ghrah.manifest.agent import AgentManifest
 from ghrah.manifest.errors import ManifestNotFoundError
@@ -42,6 +41,7 @@ from ghrah.manifest.protocols import ManifestStoreProtocol
 from ghrah.manifest.resolver import ManifestResolver, ResolvedAbility
 from ghrah.manifest.store import BuiltinManifestStore
 from ghrah.manifest.types import PermissionFlags
+from ghrah.types.config_types import AgentConfig
 
 logger = logging.getLogger(__name__)
 

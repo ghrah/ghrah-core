@@ -35,7 +35,7 @@ from ghrah.abilities.builtin.read_file import ReadFileAbility
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.agents.builder import AgentBuilder
 from ghrah.communication import SupervisorActor
-from ghrah.core.config import AgentConfig
+from ghrah.types.config_types import AgentConfig
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

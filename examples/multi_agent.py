@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 
 from ghrah.communication import SupervisorActor
-from ghrah.core.config import AgentConfig
+from ghrah.types.config_types import AgentConfig
 
 
 async def main() -> None:
