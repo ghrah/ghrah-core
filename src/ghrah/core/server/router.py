@@ -144,10 +144,15 @@ class MessageRouter:
         if message.type == CommandType.EXECUTE_ABILITY.value:
             return await self._handle_execute_ability(message, session_id, request_id)
 
-        if message.type not in CORE_COMMANDS and message.type not in (
-            CommandType.SUBSCRIBE.value,
-            CommandType.UNSUBSCRIBE.value,
-        ) and message.type not in SESSION_COMMANDS:
+        if (
+            message.type not in CORE_COMMANDS
+            and message.type
+            not in (
+                CommandType.SUBSCRIBE.value,
+                CommandType.UNSUBSCRIBE.value,
+            )
+            and message.type not in SESSION_COMMANDS
+        ):
             return create_error(
                 code="UNKNOWN_COMMAND",
                 message=f"Unknown command type: {message.type}",
@@ -230,21 +235,15 @@ class MessageRouter:
 
         if future is None:
             logger.debug(
-                f"command_result with request_id={request_id} "
-                f"has no pending request, ignoring"
+                f"command_result with request_id={request_id} has no pending request, ignoring"
             )
             return False
 
         if not future.done():
             future.set_result(message)
-            logger.info(
-                f"Resolved pending request {request_id} "
-                f"from session {session_id}"
-            )
+            logger.info(f"Resolved pending request {request_id} from session {session_id}")
         else:
-            logger.warning(
-                f"Pending request {request_id} already resolved, discarding"
-            )
+            logger.warning(f"Pending request {request_id} already resolved, discarding")
 
         return True
 
@@ -282,9 +281,7 @@ class MessageRouter:
                 f"from session {session_id}"
             )
         else:
-            logger.warning(
-                f"Pending execute_ability request {request_id} already resolved"
-            )
+            logger.warning(f"Pending execute_ability request {request_id} already resolved")
 
         return True
 
@@ -327,9 +324,7 @@ class MessageRouter:
             f"session {target_session} (request_id={request_id})"
         )
 
-        future: asyncio.Future[Message] = (
-            asyncio.get_running_loop().create_future()
-        )
+        future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
         self._pending_requests[request_id] = future
         self._request_sessions[request_id] = session_id
 
@@ -362,17 +357,18 @@ class MessageRouter:
     ) -> Message:
         payload = expect_payload(message, ExecuteAbilityPayload)
         logger.info(
-            "_handle_execute_ability: agent=%s ability=%s request_id=%s "
-            "from_session=%s",
-            payload.agent_name, payload.ability_name, payload.request_id, session_id,
+            "_handle_execute_ability: agent=%s ability=%s request_id=%s from_session=%s",
+            payload.agent_name,
+            payload.ability_name,
+            payload.request_id,
+            session_id,
         )
 
         subject_sessions = self._connection_manager.active_sessions
 
         if not subject_sessions:
             logger.warning(
-                f"No Subject session available for execute ability "
-                f"(request_id={request_id})"
+                f"No Subject session available for execute ability (request_id={request_id})"
             )
             return create_command_result(
                 request_id=request_id,
@@ -394,9 +390,7 @@ class MessageRouter:
             f"(request_id={request_id})"
         )
 
-        future: asyncio.Future[Message] = (
-            asyncio.get_running_loop().create_future()
-        )
+        future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
         self._pending_requests[request_id] = future
         self._request_sessions[request_id] = session_id
 
@@ -430,7 +424,9 @@ class MessageRouter:
         payload = expect_payload(message, SpawnAgentPayload)
         logger.info(
             "_handle_spawn_agent: name=%s agent_config=%s request_id=%s",
-            payload.config.name, payload.config.agent_config_name, request_id,
+            payload.config.name,
+            payload.config.agent_config_name,
+            request_id,
         )
 
         core_config = AgentConfig(
@@ -441,14 +437,10 @@ class MessageRouter:
             max_iterations=payload.config.max_iterations,
             communication_timeout=payload.config.communication_timeout,
             window=(
-                build_window_from_dict(payload.config.window)
-                if payload.config.window
-                else None
+                build_window_from_dict(payload.config.window) if payload.config.window else None
             ),
             context=(
-                build_context_from_dict(payload.config.context)
-                if payload.config.context
-                else None
+                build_context_from_dict(payload.config.context) if payload.config.context else None
             ),
             model_overrides=(
                 build_model_overrides_from_dict(payload.config.model_overrides)
@@ -469,14 +461,14 @@ class MessageRouter:
                         request_id=request_id,
                         success=False,
                         error=f"Unknown ability type '{ability_def.ability_type}' "
-                              f"for agent '{payload.config.name}': {e}",
+                        f"for agent '{payload.config.name}': {e}",
                     )
                 except (TypeError, ValueError) as e:
                     return create_command_result(
                         request_id=request_id,
                         success=False,
                         error=f"Invalid params for ability '{ability_def.ability_type}' "
-                              f"for agent '{payload.config.name}': {e}",
+                        f"for agent '{payload.config.name}': {e}",
                     )
 
         try:
@@ -491,9 +483,7 @@ class MessageRouter:
 
         if agent_name:
             config_dict = (
-                payload.config.model_dump()
-                if hasattr(payload.config, "model_dump")
-                else {}
+                payload.config.model_dump() if hasattr(payload.config, "model_dump") else {}
             )
             await self._event_bus.emit_agent_spawned(
                 agent_name=agent_name,
@@ -509,27 +499,30 @@ class MessageRouter:
     def _create_ability_from_def(self, ability_def: Any) -> AbilityProtocol:
         """将 AbilityDefinitionPayload 转换为 Ability 实例。
 
-        处理两类 Ability 的参数转换：
-        1. 文件系统类（read/write/list/edit/move/delete_file）：将
-           require_hitl/allowed_paths/denied_paths 等原始字段转换为
-           FSPermissionChecker 后再传入构造函数。
+        与 runner 本地实例化路径共享同一套常量与 AbilityRegistry.create 工厂，
+        消除 type→class 映射副本与行为漂移：
+        1. 文件系统类（FS_ABILITY_TYPES）：将 require_hitl/allowed_paths/
+           denied_paths/workspace_root 原始字段转换为 FSPermissionChecker。
+           注：路径模板展开 + "."→workspace 由 runner 产参时统一完成，
+           本路由仅消费已解析结果（workspace_root 仍由 checker 解析符号链接）。
         2. execute_command：将 require_approval 标记转换为
-           CommandSafetyChecker + CommandApprovalHook 注入构造函数，
-           确保 HITL 在安全分类下生效。
+           CommandSafetyChecker + CommandApprovalHook 注入构造函数。
+        3. end_task：统一 mode="toolcall"（与本地路径一致，消除漂移点①）。
         """
-        from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
-        from ghrah.abilities.registry import AbilityRegistry
+        from ghrah.abilities import (
+            FS_ABILITY_TYPES,
+            AbilityRegistry,
+            CommandApprovalHook,
+            CommandSafetyChecker,
+            FSPermissionChecker,
+        )
 
         params = dict(ability_def.params) if ability_def.params else {}
         ability_type = ability_def.ability_type
 
-        _fs_ability_types = {
-            "read_file", "write_file", "list_directory",
-            "edit_file", "move_file", "delete_file",
-        }
         _fs_permission_keys = {"require_hitl", "allowed_paths", "denied_paths", "workspace_root"}
 
-        if ability_type in _fs_ability_types and _fs_permission_keys & set(params.keys()):
+        if ability_type in FS_ABILITY_TYPES and _fs_permission_keys & set(params.keys()):
             fs_params = {k: params.pop(k) for k in _fs_permission_keys if k in params}
             require_hitl = fs_params.get("require_hitl", True)
             allowed_paths = fs_params.get("allowed_paths")
@@ -544,16 +537,13 @@ class MessageRouter:
             params["permission_checker"] = checker
 
         if ability_type == "execute_command":
-            from ghrah.abilities.builtin.command_safety import (
-                CommandApprovalHook,
-                CommandSafetyChecker,
-            )
             require_approval = params.pop("require_approval", True)
-            command_checker = CommandSafetyChecker(
-                require_approval=bool(require_approval)
-            )
+            command_checker = CommandSafetyChecker(require_approval=bool(require_approval))
             params["command_checker"] = command_checker
             params["hooks"] = [CommandApprovalHook(command_checker)]
+
+        if ability_type == "end_task":
+            params["mode"] = "toolcall"
 
         return AbilityRegistry.create(ability_type, **params)
 
@@ -737,9 +727,7 @@ class MessageRouter:
             data=result,
         )
 
-    async def _handle_delegate(
-        self, message: Message, session_id: str, request_id: str
-    ) -> Message:
+    async def _handle_delegate(self, message: Message, session_id: str, request_id: str) -> Message:
         payload = expect_payload(message, DelegatePayload)
         result = await self._supervisor.delegate(
             from_agent=payload.from_agent,
@@ -835,6 +823,7 @@ class MessageRouter:
         )
 
         from ghrah.protocol.types import SessionInfoPayload
+
         session_info = SessionInfoPayload(
             session_id=session.session_id,
             agent_name=session.agent_name,
@@ -868,6 +857,7 @@ class MessageRouter:
 
         session = agent_handle._context_manager.get_active_session()
         from ghrah.protocol.types import SessionInfoPayload
+
         session_info = SessionInfoPayload(
             session_id=session.session_id,
             agent_name=session.agent_name,

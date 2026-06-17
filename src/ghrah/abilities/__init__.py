@@ -95,9 +95,37 @@ from ghrah.abilities.paths import (
     AbilityPathSpec,
     extract_paths,
     is_subpath,
+    resolve_fs_permission_paths,
 )
 from ghrah.abilities.registry import AbilityRegistry
 from ghrah.types.results import ActionOutcome, ActionResult
+
+FS_ABILITY_TYPES: frozenset[str] = frozenset(
+    {
+        "read_file",
+        "write_file",
+        "list_directory",
+        "edit_file",
+        "move_file",
+        "delete_file",
+    }
+)
+"""文件系统类 Ability 的 handler 类型集合（单一真源）。
+
+runner（本地实例化）与 router（分布式实例化）共用此集合，
+避免 `_fs_handler_types` / `_fs_ability_types` 两份副本漂移。
+"""
+
+CLUSTER_ABILITY_TYPES: frozenset[str] = frozenset(
+    {
+        "query_agents",
+        "send_message",
+        "broadcast_message",
+        "spawn_agent",
+        "terminate_agent",
+    }
+)
+"""集群通信类 Ability 的 handler 类型集合（单一真源）。"""
 
 
 def _register_builtin_abilities() -> None:
@@ -126,6 +154,9 @@ def _register_builtin_abilities() -> None:
 _register_builtin_abilities()
 
 __all__ = [
+    # 共享常量（单一真源）
+    "FS_ABILITY_TYPES",
+    "CLUSTER_ABILITY_TYPES",
     # 核心抽象
     "Ability",
     "ActionOutcome",
@@ -190,4 +221,5 @@ __all__ = [
     "AbilityPathSpec",
     "ABILITY_PATH_SPECS",
     "extract_paths",
+    "resolve_fs_permission_paths",
 ]
