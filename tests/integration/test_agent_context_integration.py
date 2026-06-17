@@ -245,7 +245,7 @@ class TestIterationLifecycle:
         agent._message_history.append(msg)
 
         cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -271,7 +271,7 @@ class TestIterationLifecycle:
         agent._message_history.append(msg)
 
         cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -311,7 +311,7 @@ class TestIterationLifecycle:
         agent._message_history.append(msg)
 
         cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -338,7 +338,7 @@ class TestIterationLifecycle:
         agent._message_history.append(msg)
 
         cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -377,20 +377,24 @@ class TestMessageDelegation:
 # ----------------------------------------------------------------
 
 
-class TestBackwardCompatibility:
-    """验证旧 API 通过 property 代理保持兼容。"""
+class TestContextStateAPI:
+    """验证 ContextManager 的状态 API（set_state/get_current_state）。
+
+    state_manager 私有属性已移除（intentional breaking change），
+    状态读写统一走 get_current_state()/set_state()/update_state()。
+    """
 
     def test_state_read_via_context_manager(self) -> None:
-        """状态应通过 ContextManager.state_manager 读取。"""
+        """状态应通过 ContextManager.get_current_state() 读取。"""
         agent = _create_agent()
         agent.set_state("foo", "bar")
         assert agent._context_manager.get_current_state() == {"foo": "bar"}
 
     def test_state_write_via_context_manager(self) -> None:
-        """状态应通过 set_state() 或 ContextManager 写入。"""
+        """状态应通过 set_state() 写入，通过 get_current_state() 读取。"""
         agent = _create_agent()
         agent.set_state("new", "state")
-        assert agent._context_manager.state_manager.current == {"new": "state"}
+        assert agent._context_manager.get_current_state() == {"new": "state"}
 
     def test_get_state(self) -> None:
         """get_state() 应返回包含 ContextManager 状态的完整信息。"""
@@ -405,7 +409,7 @@ class TestBackwardCompatibility:
         """set_state(key, value) 应更新 ContextManager 的状态。"""
         agent = _create_agent()
         agent.set_state("y", 2)
-        assert agent._context_manager.state_manager.current.get("y") == 2
+        assert agent._context_manager.get_current_state().get("y") == 2
 
     def test_get_history(self) -> None:
         """get_history() 应返回 _message_history 的内容。"""
@@ -529,11 +533,11 @@ class TestSubAgentFork:
 
         forked = agent._context_manager.fork_for_sub_agent("sub-agent")
 
-        assert forked._agent_name == "sub-agent"
+        assert forked.agent_name == "sub-agent"
         assert forked.get_current_state() == {"shared": "value"}
 
-        forked.state_manager.reset(new_state={**forked.state_manager.current, "new": "data"})
-        assert "new" not in agent._context_manager.state_manager.current
+        forked.set_state("new", "data")
+        assert "new" not in agent._context_manager.get_current_state()
 
     def test_fork_with_state_filter(self) -> None:
         """fork 时应支持状态过滤。"""

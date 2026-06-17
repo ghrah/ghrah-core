@@ -76,6 +76,7 @@ class ExecutorProtocol(Protocol):
         abilities: dict[str, AbilityProtocol],
         accumulated_data: dict[str, Any],
         context_manager: Any,
+        last_action_result: Any = None,
     ) -> list[dict]: ...
 
     def update_hooks(self, hooks: list[Any]) -> None: ...

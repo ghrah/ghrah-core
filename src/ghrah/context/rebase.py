@@ -95,12 +95,12 @@ def create_rebased_context(
         system_prompt=system_prompt,
         persistence=source_cm.persistence,
         auto_persist=source_cm.auto_persist,
-        message_factory=source_cm._message_factory,
+        message_factory=source_cm.message_factory,
     )
 
     # 5. 继承消息到子 CM
     if source_messages:
-        child_cm.extend_messages(source_messages)
+        child_cm.message_store.extend(source_messages)
 
     # 6. 更新链头节点 metadata，记录 rebase 来源
     head_node = child_cm.chain.head
@@ -113,7 +113,7 @@ def create_rebased_context(
                 "rebase_from_node_id": source_node_id,
             },
         )
-        child_cm.update_root_node(rebased_head)
+        child_cm.chain.replace_node(rebased_head)
 
     # 7. 更新根 session metadata，记录 rebase 来源
     source_session = source_cm.get_active_session()
@@ -125,11 +125,11 @@ def create_rebased_context(
         rebase_from_session_id=source_session.session_id if source_session else None,
         system_prompt=system_prompt,
     )
-    child_cm.upsert_session(updated_session)
+    child_cm.replace_session(updated_session)
 
     # 8. 持久化根节点（如果 auto_persist 开启）
     if child_cm.auto_persist and child_cm.persistence is not None:
-        child_cm._schedule_persist_node(child_cm.chain.head)  # type: ignore[arg-type]
+        child_cm.persist_node(child_cm.chain.head)
 
     return child_cm
 

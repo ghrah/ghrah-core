@@ -94,6 +94,7 @@ class AbilityExecutor(ABC):
         abilities: dict[str, AbilityProtocol],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
+        last_action_result: ActionResult | None = None,
     ) -> list[dict]:
         """执行一组 tool_calls，返回结果列表。
 
@@ -104,6 +105,7 @@ class AbilityExecutor(ABC):
             abilities: 已注册的 Ability 字典
             accumulated_data: 累积数据
             context_manager: 上下文管理器
+            last_action_result: 上一次 action 的结果（由 ActorAgent 从 IterationState 显式传入）
 
         Returns:
             结果列表，每个 dict 包含 "ability_name", "action_result", "tool_call_id"
@@ -328,6 +330,7 @@ class LocalAbilityExecutor(AbilityExecutor):
         abilities: dict[str, AbilityProtocol],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
+        last_action_result: ActionResult | None = None,
     ) -> list[dict]:
         """执行一组 tool_calls，返回结果列表。
 
@@ -338,9 +341,10 @@ class LocalAbilityExecutor(AbilityExecutor):
             abilities: 已注册的 Ability 字典
             accumulated_data: 累积数据
             context_manager: 上下文管理器
+            last_action_result: 上一次 action 的结果（由 ActorAgent 从 IterationState 显式传入）
 
         Returns:
-            结果列表
+            结果列表，每个 dict 包含 "ability_name", "action_result", "tool_call_id"
         """
         results: list[dict] = []
         tool_call_tasks: list[tuple[AbilityProtocol, dict[str, Any], str]] = []
@@ -374,7 +378,8 @@ class LocalAbilityExecutor(AbilityExecutor):
             raw_results = await asyncio.gather(
                 *[
                     self._execute_single_with_context(
-                        ability, args, accumulated_data, context_manager
+                        ability, args, accumulated_data, context_manager,
+                        last_action_result,
                     )
                     for ability, args, _tc_id in tool_call_tasks
                 ],
@@ -404,6 +409,7 @@ class LocalAbilityExecutor(AbilityExecutor):
         tool_args: dict[str, Any],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
+        last_action_result: ActionResult | None = None,
     ) -> dict:
         """执行单个 ability（用于并行执行），创建独立的 AbilityExecutionContext。
 
@@ -412,6 +418,7 @@ class LocalAbilityExecutor(AbilityExecutor):
             tool_args: 工具调用参数
             accumulated_data: 累积数据
             context_manager: 上下文管理器
+            last_action_result: 上一次 action 的结果（由 ActorAgent 从 IterationState 显式传入）
 
         Returns:
             dict 包含 "ability_name" 和 "action_result"
@@ -427,7 +434,7 @@ class LocalAbilityExecutor(AbilityExecutor):
                 **copy.deepcopy(accumulated_data),
                 "tool_args": resolved_args,
             },
-            last_action_result=context_manager.last_action_result,
+            last_action_result=last_action_result,
             agent_name=self._agent_name,
         )
 
@@ -727,6 +734,7 @@ class RemoteAbilityExecutor(AbilityExecutor):
         abilities: dict[str, AbilityProtocol],
         accumulated_data: dict[str, Any],
         context_manager: ContextManager,
+        last_action_result: ActionResult | None = None,
     ) -> list[dict]:
         """并行发送多个 tool_calls 到 Subject。
 
@@ -737,6 +745,8 @@ class RemoteAbilityExecutor(AbilityExecutor):
             abilities: 已注册的 Ability 字典
             accumulated_data: 累积数据
             context_manager: 上下文管理器
+            last_action_result: 上一次 action 的结果
+                （远程模式由 Subject 端自管理，此处接受以保持接口一致）
 
         Returns:
             结果列表，每个 dict 包含 "ability_name", "action_result", "tool_call_id"

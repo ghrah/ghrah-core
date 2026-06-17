@@ -47,6 +47,7 @@ from ghrah.abilities.errors import AbilityNotFoundError
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import block_to_dict
 from ghrah.chat.message import ChatMessage
+from ghrah.context.iteration_state import IterationState
 from ghrah.context.manager import ContextManager
 from ghrah.context.session import Session
 from ghrah.core.ability_protocol import AbilityProtocol, ExecutorProtocol
@@ -125,6 +126,7 @@ class ActorAgent:
         self._bound_tools: list[dict[str, Any]] = []
         self._all_hooks: list[Hook] = []
         self._message_queue: asyncio.Queue[ChatMessage] = asyncio.Queue()
+        self._iteration_state = IterationState()
 
         # ────── 分布式模式：由 SupervisorActor 后置注入 ──────
         self._command_sender: Any = None
@@ -214,12 +216,9 @@ class ActorAgent:
         self._abilities[ability.name] = ability
 
         # 写入 ability 默认状态到 ContextManager 的状态作用域
-        # 注意：current 返回深拷贝，修改后通过 reset 替换内部状态
         default_state = ability.get_default_state()
         if default_state:
-            state_snapshot = self._context_manager.state_manager.current
-            state_snapshot[ability.name] = copy.deepcopy(default_state)
-            self._context_manager.state_manager.reset(new_state=state_snapshot)
+            self._context_manager.set_state(ability.name, copy.deepcopy(default_state))
 
         logger.info(
             f"ActorAgent[{self.config.name}] registered ability: "
@@ -389,14 +388,7 @@ class ActorAgent:
             ) from e
 
     def _inject_llm_into_summary_strategy(self, llm: LLMProtocol) -> None:
-        from ghrah.context.strategies.llm_summary import LLMSummaryStrategy
-
-        wm = self._context_manager._window_manager
-        if wm is None:
-            return
-        for strategy in wm._strategies:
-            if isinstance(strategy, LLMSummaryStrategy) and strategy.llm is None:
-                strategy.set_llm(llm)
+        self._context_manager.inject_llm_into_summary(llm)
 
     # ----------------------------------------------------------------
     # 核心驱动循环
@@ -436,12 +428,9 @@ class ActorAgent:
                 ChatMessage.user(text_or_blocks=message.content, source="human")
             )
 
-            # 将 max_iterations 从 config 设置到 ContextManager
-            cm = self._context_manager
-            cm.max_iterations = self.config.max_iterations
-            cm.reset_iteration()
-            cm.last_action_result = None
-            cm.pending_route = None
+            # 将 max_iterations 从 config 设置到 IterationState
+            self._iteration_state.max_iterations = self.config.max_iterations
+            self._iteration_state.reset()
 
             # ────── 分布式模式：CoreClient 自动连接（在新架构中始终连接） ──────
             if self._command_sender is not None:
@@ -480,7 +469,7 @@ class ActorAgent:
                     content_blocks=response.content_blocks,
                     message_type="result",
                     metadata={
-                        "iteration": self._context_manager.iteration,
+                        "iteration": self._iteration_state.iteration,
                     },
                 )
             )
@@ -520,7 +509,7 @@ class ActorAgent:
 
         # 注意：CommandSender 在新架构中通过 MessageRouter 本地方法调用，无需显式连接
 
-        while cm.should_continue:
+        while self._iteration_state.should_continue:
             # 1. BEFORE_ACTION hook（drive_loop 级）
             before_ctx = self._build_hook_context(accumulated_data)
             hook_result = await self._run_hooks(HookPoint.BEFORE_ACTION, before_ctx)
@@ -613,10 +602,10 @@ class ActorAgent:
             last_ability_name = ""
             if action_results:
                 last_entry = action_results[-1]
-                cm.last_action_result = last_entry.get("action_result")
+                self._iteration_state.last_action_result = last_entry.get("action_result")
                 last_ability_name = last_entry.get("ability_name", "")
             else:
-                cm.last_action_result = None
+                self._iteration_state.last_action_result = None
 
             after_ctx = self._build_hook_context(accumulated_data, ability_name=last_ability_name)
             hook_result = await self._run_hooks(HookPoint.AFTER_ACTION, after_ctx)
@@ -624,21 +613,25 @@ class ActorAgent:
                 if hook_result.modified_context:
                     accumulated_data.update(hook_result.modified_context)
                 if hook_result.route_to:
-                    cm.pending_route = hook_result.route_to
-                    cm.advance_iteration()
+                    self._iteration_state.pending_route = hook_result.route_to
+                    self._iteration_state.advance()
                     continue
                 if not hook_result.should_continue:
                     break
 
             # 6. 检查最大迭代
-            if not cm.is_unlimited and cm.iteration + 1 >= cm.max_iterations:
+            iter_state = self._iteration_state
+            if (
+                not iter_state.is_unlimited
+                and iter_state.iteration + 1 >= iter_state.max_iterations
+            ):
                 max_ctx = self._build_hook_context(accumulated_data)
                 max_hook_result = await self._run_hooks(HookPoint.ON_MAX_ITERATIONS, max_ctx)
                 if max_hook_result is not None and max_hook_result.route_to:
                     await self._execute_routed_ability(accumulated_data, max_hook_result.route_to)
                 break
 
-            cm.advance_iteration()
+            self._iteration_state.advance()
 
     async def _action(self, accumulated_data: dict[str, Any]) -> dict[str, Any]:
         """执行一次 action：调用 LLM → 解析响应 → 执行 abilities。
@@ -723,6 +716,7 @@ class ActorAgent:
                 abilities=self._abilities,
                 accumulated_data=accumulated_data,
                 context_manager=cm,
+                last_action_result=self._iteration_state.last_action_result,
             )
 
             # 将 ChatMessage.tool() 添加到 ContextManager
@@ -769,7 +763,7 @@ class ActorAgent:
         try:
             ctx = self._build_ability_context(ability_name, {}, accumulated_data)
             action_result = await ability.execute(ctx)
-            cm.last_action_result = action_result
+            self._iteration_state.last_action_result = action_result
             cm.commit_iteration(
                 ability_names=[ability_name],
                 action_results=[{"ability_name": ability_name, "action_result": action_result}],
@@ -905,7 +899,7 @@ class ActorAgent:
             agent_state=cm.get_current_state(),
             context_manager=cm,
             accumulated_data=copy.deepcopy(accumulated_data),
-            last_action_result=cm.last_action_result,
+            last_action_result=self._iteration_state.last_action_result,
             supervisor=self._supervisor,
             agent_name=self.config.name,
         )
@@ -936,7 +930,7 @@ class ActorAgent:
                 **copy.deepcopy(accumulated_data),
                 "tool_args": tool_args,
             },
-            last_action_result=cm.last_action_result,
+            last_action_result=self._iteration_state.last_action_result,
             supervisor=self._supervisor,
             agent_name=self.config.name,
         )
@@ -953,8 +947,8 @@ class ActorAgent:
         cm = self._context_manager
 
         # 从 last_action_result 中提取回复内容
-        if cm.last_action_result is not None:
-            ar = cm.last_action_result
+        if self._iteration_state.last_action_result is not None:
+            ar = self._iteration_state.last_action_result
             content = ar.data.get("response", ar.data.get("content", ""))
             if not content:
                 # 尝试将整个 data 转为字符串
@@ -1072,21 +1066,20 @@ class ActorAgent:
         sessions = self._context_manager.list_sessions()
         result = []
         for session in sessions:
-            is_active = session.session_id == self._context_manager._active_session_id
-            head_node = self._context_manager._chain.get_branch_head(session.branch_name)
+            is_active = session.session_id == self._context_manager.active_session_id
+            head_node = self._context_manager.get_branch_head(session.branch_name)
             result.append({
                 "session_id": session.session_id,
                 "agent_name": session.agent_name,
                 "branch_name": session.branch_name,
                 "state": "active" if is_active else "idle",
                 "head_node_id": head_node.id if head_node else None,
-                # "root_node_id": self._context_manager._chain.root.id if self._context_manager._chain.root else None,
                 "parent_session_id": session.parent_session_id,
                 "fork_point_node_id": session.parent_node_id,
                 "created_at": session.created_at.isoformat() if session.created_at else "",
                 "metadata": session.metadata,
-                "message_count": len(self._context_manager._message_store),
-                "iteration_count": self._context_manager.iteration,
+                "message_count": self._context_manager.message_count,
+                "iteration_count": self._iteration_state.iteration,
             })
         return result
 
@@ -1099,14 +1092,9 @@ class ActorAgent:
             session_id: 要归档的 session ID
 
         Raises:
-            ValueError: session 不存在
+            KeyError: session 不存在
         """
-        sessions = self._context_manager._sessions
-        if session_id not in sessions:
-            raise ValueError(f"Session '{session_id}' not found.")
-
-        session = sessions[session_id]
-        object.__setattr__(session, "metadata", {**session.metadata, "archived": True})
+        self._context_manager.archive_session(session_id)
 
         await self._event_publisher.publish(
             SessionArchivedEvent(
@@ -1128,16 +1116,10 @@ class ActorAgent:
             session_id: 要删除的 session ID
 
         Raises:
-            ValueError: session 不存在或是当前活跃 session
+            KeyError: session 不存在
+            ValueError: 试图删除当前活跃 session
         """
-        sessions = self._context_manager._sessions
-        if session_id not in sessions:
-            raise ValueError(f"Session '{session_id}' not found.")
-
-        if session_id == self._context_manager._active_session_id:
-            raise ValueError("Cannot delete the active session.")
-
-        session = sessions.pop(session_id)
+        self._context_manager.delete_session(session_id)
 
         await self._event_publisher.publish(
             SessionDeletedEvent(
@@ -1202,12 +1184,9 @@ class ActorAgent:
     def set_state(self, key: str, value: Any) -> None:
         """设置 Agent 内部状态。
 
-        通过 StateManager.reset() 设置单个键值，
-        适用于迭代外的状态设置。
+        委托给 ContextManager.set_state()，适用于迭代外的状态设置。
         """
-        current = self._context_manager.state_manager.current
-        current[key] = value
-        self._context_manager.state_manager.reset(new_state=current)
+        self._context_manager.set_state(key, value)
 
     async def reset(self) -> None:
         """重置 Agent 状态（清空对话历史，保留 LLM 客户端和 abilities）。
@@ -1219,21 +1198,23 @@ class ActorAgent:
         # 清空消息队列
         self._message_queue = asyncio.Queue()
 
+        # 重置驱动循环状态（iteration/last_action_result/pending_route 归零，
+        # max_iterations 从 config 重新同步——与 _drive_loop 初始化一致）
+        self._iteration_state.max_iterations = self.config.max_iterations
+        self._iteration_state.reset()
+
         # 重建 ContextManager（通过注入的 factory 回调）
         self._context_manager = self._context_manager_factory()
 
-        # 重新写入所有 ability 的默认状态（一次性收集，避免多次 reset）
+        # 重新写入所有 ability 的默认状态（一次性收集，避免多次 update_state）
         default_states: dict[str, dict[str, Any]] = {}
         for ability in self._abilities.values():
             default_state = ability.get_default_state()
             if default_state:
-                default_states[ability.name] = default_state
+                default_states[ability.name] = copy.deepcopy(default_state)
 
         if default_states:
-            state_snapshot = self._context_manager.state_manager.current
-            for name, state in default_states.items():
-                state_snapshot[name] = copy.deepcopy(state)
-            self._context_manager.state_manager.reset(new_state=state_snapshot)
+            self._context_manager.update_state(default_states)
 
         logger.info(f"ActorAgent[{self.config.name}] reset")
 

@@ -314,7 +314,6 @@ class TestLocalAbilityExecutor:
         # 创建 mock ContextManager
         mock_cm = MagicMock()
         mock_cm.get_current_state.return_value = {}
-        mock_cm.last_action_result = None
 
         tool_calls = [
             ToolCallBlock(name="mock_ability", arguments={"key": "value"}, id="call_123"),
@@ -325,6 +324,7 @@ class TestLocalAbilityExecutor:
             abilities={"mock_ability": ability},
             accumulated_data={},
             context_manager=mock_cm,
+            last_action_result=None,
         )
 
         assert len(results) == 1
@@ -339,7 +339,6 @@ class TestLocalAbilityExecutor:
 
         mock_cm = MagicMock()
         mock_cm.get_current_state.return_value = {}
-        mock_cm.last_action_result = None
 
         tool_calls = [
             ToolCallBlock(name="unknown_ability", arguments={}, id="call_456"),
@@ -350,6 +349,7 @@ class TestLocalAbilityExecutor:
             abilities={},
             accumulated_data={},
             context_manager=mock_cm,
+            last_action_result=None,
         )
 
         assert len(results) == 1
@@ -366,7 +366,6 @@ class TestLocalAbilityExecutor:
 
         mock_cm = MagicMock()
         mock_cm.get_current_state.return_value = {}
-        mock_cm.last_action_result = None
 
         tool_calls = [
             ToolCallBlock(name="ability_a", arguments={}, id="call_1"),

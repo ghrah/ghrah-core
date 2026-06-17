@@ -32,7 +32,6 @@ from ghrah.context.session import Session
 from ghrah.context.state import StateManager
 from ghrah.context.window import WindowManager
 from ghrah.core.window_protocol import MessageFactory
-from ghrah.types.results import ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
@@ -93,12 +92,6 @@ class ContextManager:
         self._in_iteration: bool = False
         self._persist_tasks: set[asyncio.Task[Any]] = set()
 
-        # 驱动循环控制状态
-        self._iteration: int = 0
-        self._max_iterations: int = 10
-        self._last_action_result: ActionResult | None = None
-        self._pending_route: str | None = None
-
         # Session 管理
         self._sessions: dict[str, Session] = {}
         self._active_session_id: str | None = None
@@ -147,11 +140,6 @@ class ContextManager:
         return self._chain
 
     @property
-    def state_manager(self) -> StateManager:
-        """底层状态管理器（只读访问）。"""
-        return self._state_manager
-
-    @property
     def message_store(self) -> MessageStore:
         """底层消息存储（只读访问）。"""
         return self._message_store
@@ -176,59 +164,20 @@ class ContextManager:
         """是否自动持久化。"""
         return self._auto_persist
 
-    # ----------------------------------------------------------------
-    # 驱动循环控制状态
-    # ----------------------------------------------------------------
+    @property
+    def message_factory(self) -> MessageFactory | None:
+        """消息工厂（只读访问）。"""
+        return self._message_factory
 
     @property
-    def iteration(self) -> int:
-        """当前迭代次数。"""
-        return self._iteration
+    def message_count(self) -> int:
+        """当前 MessageStore 中的消息数量。"""
+        return self._message_store.count
 
     @property
-    def max_iterations(self) -> int:
-        """最大迭代次数（-1 代表无上限）。"""
-        return self._max_iterations
-
-    @max_iterations.setter
-    def max_iterations(self, value: int) -> None:
-        self._max_iterations = value
-
-    @property
-    def is_unlimited(self) -> bool:
-        """是否无上限迭代。"""
-        return self._max_iterations < 0
-
-    @property
-    def should_continue(self) -> bool:
-        """是否应该继续循环。"""
-        return self.is_unlimited or self._iteration < self._max_iterations
-
-    def advance_iteration(self) -> None:
-        """推进迭代计数。"""
-        self._iteration += 1
-
-    def reset_iteration(self) -> None:
-        """重置迭代计数。"""
-        self._iteration = 0
-
-    @property
-    def last_action_result(self) -> ActionResult | None:
-        """上一次 action 的结果。"""
-        return self._last_action_result
-
-    @last_action_result.setter
-    def last_action_result(self, value: ActionResult | None) -> None:
-        self._last_action_result = value
-
-    @property
-    def pending_route(self) -> str | None:
-        """Hook 设置的路由目标。"""
-        return self._pending_route
-
-    @pending_route.setter
-    def pending_route(self, value: str | None) -> None:
-        self._pending_route = value
+    def active_session_id(self) -> str | None:
+        """当前活跃 session 的 ID。"""
+        return self._active_session_id
 
     # ----------------------------------------------------------------
     # Session 管理
@@ -337,6 +286,78 @@ class ContextManager:
         branch_head = self._chain.active_head
         if branch_head:
             self._state_manager.reset(branch_head.agent_state)
+
+    def get_session(self, session_id: str) -> Session:
+        """获取指定 ID 的 session。
+
+        Args:
+            session_id: session ID
+
+        Returns:
+            对应的 Session 实例
+
+        Raises:
+            KeyError: session 不存在
+        """
+        if session_id not in self._sessions:
+            raise KeyError(f"Session '{session_id}' not found.")
+        return self._sessions[session_id]
+
+    def get_branch_head(self, branch_name: str) -> ContextNode | None:
+        """获取指定分支的头节点。
+
+        委托给 ActionChain.get_branch_head()。
+
+        Args:
+            branch_name: 分支名称
+
+        Returns:
+            分支头 ContextNode，不存在则返回 None
+        """
+        return self._chain.get_branch_head(branch_name)
+
+    def archive_session(self, session_id: str) -> Session:
+        """归档指定 session（标记 metadata.archived=True）。
+
+        Args:
+            session_id: 要归档的 session ID
+
+        Returns:
+            归档后的 Session 实例（新对象，dataclasses.replace 创建）
+
+        Raises:
+            KeyError: session 不存在
+        """
+        if session_id not in self._sessions:
+            raise KeyError(f"Session '{session_id}' not found.")
+        session = self._sessions[session_id]
+        archived = dataclasses.replace(
+            session,
+            metadata={**session.metadata, "archived": True},
+        )
+        self._sessions[session_id] = archived
+        return archived
+
+    def delete_session(self, session_id: str) -> Session:
+        """删除指定 session。
+
+        不能删除当前活跃的 session。
+
+        Args:
+            session_id: 要删除的 session ID
+
+        Returns:
+            被删除的 Session 实例
+
+        Raises:
+            KeyError: session 不存在
+            ValueError: 试图删除当前活跃 session
+        """
+        if session_id not in self._sessions:
+            raise KeyError(f"Session '{session_id}' not found.")
+        if session_id == self._active_session_id:
+            raise ValueError("Cannot delete the active session.")
+        return self._sessions.pop(session_id)
 
     # ----------------------------------------------------------------
     # 迭代生命周期
@@ -618,7 +639,6 @@ class ContextManager:
             current_ability_name="",
             agent_state=self._state_manager.current,
             context_manager=self,
-            last_action_result=self._last_action_result,
         )
 
     async def get_llm_messages(
@@ -723,35 +743,20 @@ class ContextManager:
         )
 
     # ----------------------------------------------------------------
-    # Rebase 辅助方法
+    # Session 管理（rebase 支持）
     # ----------------------------------------------------------------
 
-    def extend_messages(self, messages: list[Any]) -> None:
-        """直接向 MessageStore 追加消息（不受迭代状态影响）。
-
-        用于 rebase 等场景，需要将源 Agent 的消息直接注入到 MessageStore。
-
-        Args:
-            messages: 要追加的消息列表
-        """
-        self._message_store.extend(messages)
-
-    def upsert_session(self, session: Session) -> None:
+    def replace_session(self, session: Session) -> None:
         """插入或更新 session，并设为活跃 session。
+
+        用于 rebase 等场景，需要将新的 session 写入并设为活跃。
+        替代原 upsert_session，语义更清晰。
 
         Args:
             session: Session 实例
         """
         self._sessions[session.session_id] = session
         self._active_session_id = session.session_id
-
-    def update_root_node(self, node: ContextNode) -> None:
-        """替换 main 分支的根节点（用于 rebase 时记录来源信息）。
-
-        Args:
-            node: 替换后的根节点（ID 必须与当前根节点一致）
-        """
-        self._chain.replace_node(node)
 
     # ----------------------------------------------------------------
     # 查询
@@ -775,6 +780,47 @@ class ContextManager:
             当前状态快照
         """
         return self._state_manager.get_snapshot()
+
+    def set_state(self, key: str, value: Any) -> None:
+        """设置单个状态键值（迭代外 API）。
+
+        直接操作 StateManager，不经过事务。仅限迭代外调用；
+        迭代中应使用 apply_state_changes() 写入事务 pending 区。
+
+        Args:
+            key: 状态键
+            value: 状态值
+
+        Raises:
+            RuntimeError: 在迭代中调用（应改用 apply_state_changes()）
+        """
+        if self._in_iteration:
+            raise RuntimeError(
+                "Cannot call set_state() during iteration. Use apply_state_changes() instead."
+            )
+        current = self._state_manager.current
+        current[key] = value
+        self._state_manager.reset(new_state=current)
+
+    def update_state(self, partial: dict[str, Any]) -> None:
+        """合并更新多个状态键（迭代外 API）。
+
+        直接操作 StateManager，不经过事务。仅限迭代外调用；
+        迭代中应使用 apply_state_changes() 写入事务 pending 区。
+
+        Args:
+            partial: 要合并的状态变更
+
+        Raises:
+            RuntimeError: 在迭代中调用（应改用 apply_state_changes()）
+        """
+        if self._in_iteration:
+            raise RuntimeError(
+                "Cannot call update_state() during iteration. Use apply_state_changes() instead."
+            )
+        current = self._state_manager.current
+        current.update(partial)
+        self._state_manager.reset(new_state=current)
 
     def get_branch_heads(self) -> dict[str, ContextNode]:
         """获取所有分支的头节点。
@@ -996,6 +1042,38 @@ class ContextManager:
         if self._persist_tasks:
             await asyncio.gather(*self._persist_tasks, return_exceptions=True)
             self._persist_tasks.clear()
+
+    def persist_node(self, node: ContextNode) -> None:
+        """公共方法：后台异步保存单个节点（不阻塞主循环）。
+
+        包装内部 _schedule_persist_node，供 rebase 等外部场景使用，
+        消除对私有方法的直接访问。
+
+        Args:
+            node: 要保存的 ContextNode
+        """
+        self._schedule_persist_node(node)
+
+    # ----------------------------------------------------------------
+    # LLM 注入支持
+    # ----------------------------------------------------------------
+
+    def inject_llm_into_summary(self, llm: Any) -> None:
+        """将 LLM 注入到 WindowManager 的 LLMSummaryStrategy 中。
+
+        遍历 window_manager.strategies（使用只读 property），
+        对尚未设置 LLM 的 LLMSummaryStrategy 注入。
+
+        Args:
+            llm: 实现 LLMProtocol 的 LLM 实例
+        """
+        if self._window_manager is None:
+            return
+        from ghrah.context.strategies.llm_summary import LLMSummaryStrategy
+
+        for strategy in self._window_manager.strategies:
+            if isinstance(strategy, LLMSummaryStrategy) and strategy.llm is None:
+                strategy.set_llm(llm)
 
     def _schedule_persist_node(self, node: ContextNode) -> None:
         """后台异步保存单个节点（不阻塞主循环）。

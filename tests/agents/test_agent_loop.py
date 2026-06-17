@@ -545,13 +545,12 @@ class TestDriveLoop:
         stop_hook = StopAfterOneHook()
         agent._all_hooks.append(stop_hook)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
-        assert cm.last_action_result is not None
-        assert cm.last_action_result.outcome == ActionOutcome.SUCCESS
+        assert agent._iteration_state.last_action_result is not None
+        assert agent._iteration_state.last_action_result.outcome == ActionOutcome.SUCCESS
 
     @pytest.mark.asyncio
     async def test_max_iterations_limit(self) -> None:
@@ -567,14 +566,13 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("reply")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = 3
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 3
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert mock_llm.generate.call_count == 3
-        assert cm.iteration == 2
+        assert agent._iteration_state.iteration == 2
 
     @pytest.mark.asyncio
     async def test_unlimited_iterations_with_hook_stop(self) -> None:
@@ -587,14 +585,13 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("reply")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = -1
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = -1
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert mock_llm.generate.call_count == 1
-        assert cm.is_unlimited is True
+        assert agent._iteration_state.is_unlimited is True
 
     @pytest.mark.asyncio
     async def test_before_action_hook_stops_loop(self) -> None:
@@ -610,13 +607,12 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("response")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert mock_llm.generate.call_count == 0
-        assert cm.last_action_result is None
+        assert agent._iteration_state.last_action_result is None
 
     @pytest.mark.asyncio
     async def test_before_action_hook_routes_to_ability(self) -> None:
@@ -640,13 +636,12 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("response")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert end_ability.execute_count == 1
-        assert cm.last_action_result.data["response"] == "task ended"
+        assert agent._iteration_state.last_action_result.data["response"] == "task ended"
 
     @pytest.mark.asyncio
     async def test_after_action_hook_route_to_triggers_pending_route(self) -> None:
@@ -693,14 +688,16 @@ class TestDriveLoop:
         mock_llm.configure_tools = MagicMock()
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = 10
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 10
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert route_hook._call_count >= 1
-        assert cm.pending_route == "step2" or cm.iteration >= 1
+        assert (
+            agent._iteration_state.pending_route == "step2"
+            or agent._iteration_state.iteration >= 1
+        )
 
     @pytest.mark.asyncio
     async def test_after_action_hook_modifies_context(self) -> None:
@@ -724,8 +721,7 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("response")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -749,8 +745,7 @@ class TestDriveLoop:
         mock_llm.configure_tools = MagicMock()
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError, match="LLM crashed"):
             await agent._drive_loop()
@@ -784,9 +779,8 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("reply")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = 2
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 2
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -1290,8 +1284,7 @@ class TestMessageQueue:
 
         # 入队消息并运 drive_loop
         await agent._message_queue.put(ChatMessage.user("hello", source="human"))
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -1337,9 +1330,8 @@ class TestMessageQueue:
 
         # 入队初始消息
         await agent._message_queue.put(ChatMessage.user("start", source="human"))
-        cm = agent._context_manager
-        cm.max_iterations = 10
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 10
+        agent._iteration_state.reset()
 
         # 在 drive_loop 开始前注入一条消息
         await agent.inject_message(injected_msg)
@@ -1363,6 +1355,35 @@ class TestMessageQueue:
         assert agent._message_queue.empty()
 
     @pytest.mark.asyncio
+    async def test_reset_clears_iteration_state(self) -> None:
+        """reset() 应重置驱动循环状态（iteration/last_action_result/pending_route）。
+
+        回归测试：S1.3 将驱动循环状态从 ContextManager 迁出到
+        ActorAgent._iteration_state 后，reset() 仅重建 ContextManager 不再
+        隐式清掉这些字段，必须在 reset() 中显式重置，否则状态泄漏到下一轮
+        （例如 list_sessions() 的 iteration_count 报告旧值）。
+        """
+        agent = _create_agent(
+            AgentConfig(name="test-agent", max_iterations=7)
+        )
+        # 污染驱动循环状态
+        agent._iteration_state.iteration = 3
+        agent._iteration_state.pending_route = "step2"
+        agent._iteration_state.last_action_result = ActionResult(
+            outcome=ActionOutcome.SUCCESS,
+            data={"response": "stale"},
+        )
+
+        await agent.reset()
+
+        # reset() 必须清零这三个字段
+        assert agent._iteration_state.iteration == 0
+        assert agent._iteration_state.pending_route is None
+        assert agent._iteration_state.last_action_result is None
+        # max_iterations 应从 config 同步（而非残留默认值 10）
+        assert agent._iteration_state.max_iterations == 7
+
+    @pytest.mark.asyncio
     async def test_rollback_preserves_queued_messages(self) -> None:
         """迭代失败回滚时，排空的消息应重新注入队列，防止消息丢失。
 
@@ -1382,8 +1403,7 @@ class TestMessageQueue:
         await agent._message_queue.put(msg1)
         await agent._message_queue.put(msg2)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError, match="Action failed"):
             await agent._drive_loop()
@@ -1413,8 +1433,7 @@ class TestMessageQueue:
         for msg in messages:
             await agent._message_queue.put(msg)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError):
             await agent._drive_loop()
@@ -1436,8 +1455,7 @@ class TestMessageQueue:
         agent._llm = mock_llm
 
         # 不入队任何消息，直接触发 drive_loop
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError, match="Action failed"):
             await agent._drive_loop()
@@ -1463,8 +1481,7 @@ class TestMessageQueue:
         msg = ChatMessage.user("hello", source="human")
         await agent._message_queue.put(msg)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 

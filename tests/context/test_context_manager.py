@@ -102,7 +102,6 @@ class TestContextManagerIteration:
         cm = _make_cm()
         cm.begin_iteration()
         assert cm.in_iteration is True
-        assert cm.state_manager.in_transaction is True
 
     def test_begin_iteration_twice_raises(self) -> None:
         """重复开启抛 RuntimeError。"""
@@ -558,21 +557,6 @@ class TestContextManagerBuildContext:
         assert isinstance(ctx, AbilityExecutionContext)
         assert ctx.agent_state == {"key": "value"}
         assert ctx.context_manager is cm
-
-    def test_build_execution_context_iteration_from_cm(self) -> None:
-        """iteration 由 ContextManager 管理。"""
-        cm = _make_cm()
-
-        assert cm.iteration == 0
-
-        cm.begin_iteration()
-        cm.commit_iteration(ability_names=["ability_1"])
-        cm.begin_iteration()
-        cm.commit_iteration(ability_names=["ability_2"])
-
-        cm.advance_iteration()
-        cm.advance_iteration()
-        assert cm.iteration == 2
 
 
 # ----------------------------------------------------------------
