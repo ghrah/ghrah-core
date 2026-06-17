@@ -9,11 +9,23 @@ import logging
 from collections import deque
 from typing import Any
 
+from pydantic import BaseModel
+
 from ghrah.core.server.connection_manager import ConnectionManager
 from ghrah.protocol.types import (
+    AbilityResultPayload,
+    ActionChainUpdatedPayload,
+    AgentErrorPayload,
+    AgentResponsePayload,
+    AgentSpawnedPayload,
+    AgentTerminatedPayload,
     ClientType,
     EventType,
+    HealthStatusPayload,
+    HITLRequestPayload,
     Message,
+    SessionInfoPayload,
+    payload_agent_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,7 +107,7 @@ class EventBus:
         client_type: ClientType | None = None,
     ) -> int:
         event_type = event.type
-        agent_name = event.payload.get("agent_name")
+        agent_name = payload_agent_name(event.payload)
 
         message_dict = event.model_dump_with_timestamp()
 
@@ -138,6 +150,17 @@ class EventBus:
         )
         return await self.publish(event)
 
+    async def emit_model(
+        self,
+        event_type: EventType,
+        payload: BaseModel,
+    ) -> int:
+        """以 Pydantic 模型实例构造事件并发布（推荐路径）。"""
+        from ghrah.protocol.types import create_event
+
+        event = create_event(event_type, payload)
+        return await self.publish(event)
+
     async def enqueue(self, event: Message) -> None:
         await self._event_queue.put(event)
 
@@ -156,15 +179,18 @@ class EventBus:
     async def emit_agent_spawned(
         self, agent_name: str, config: dict[str, Any]
     ) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.AGENT_SPAWNED,
-            {"name": agent_name, "config": config},
+            AgentSpawnedPayload(
+                name=agent_name,
+                config=config,  # type: ignore[arg-type]
+            ),
         )
 
     async def emit_agent_terminated(self, agent_name: str) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.AGENT_TERMINATED,
-            {"name": agent_name},
+            AgentTerminatedPayload(name=agent_name),
         )
 
     async def emit_agent_response(
@@ -175,15 +201,15 @@ class EventBus:
         message_type: str = "result",
         metadata: dict[str, Any] | None = None,
     ) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.AGENT_RESPONSE,
-            {
-                "sender": sender,
-                "recipient": recipient,
-                "content": content,
-                "message_type": message_type,
-                "metadata": metadata or {},
-            },
+            AgentResponsePayload(
+                sender=sender,
+                recipient=recipient,
+                content=content,
+                message_type=message_type,
+                metadata=metadata or {},
+            ),
         )
 
     async def emit_action_chain_updated(
@@ -191,25 +217,25 @@ class EventBus:
         agent_name: str,
         node: dict[str, Any],
     ) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.ACTION_CHAIN_UPDATED,
-            {"agent_name": agent_name, "node": node},
+            ActionChainUpdatedPayload(agent_name=agent_name, node=node),
         )
 
     async def emit_agent_error(
         self, agent_name: str, error: str
     ) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.AGENT_ERROR,
-            {"agent_name": agent_name, "error": error},
+            AgentErrorPayload(agent_name=agent_name, error=error),
         )
 
     async def emit_health_status(
         self, status: dict[str, bool]
     ) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.HEALTH_STATUS,
-            {"status": status},
+            HealthStatusPayload(status=status),
         )
 
     async def emit_hitl_request(
@@ -220,15 +246,15 @@ class EventBus:
         tool_args: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
     ) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.HITL_REQUEST,
-            {
-                "promise_id": promise_id,
-                "agent_name": agent_name,
-                "ability_name": ability_name,
-                "tool_args": tool_args or {},
-                "context": context or {},
-            },
+            HITLRequestPayload(
+                promise_id=promise_id,
+                agent_name=agent_name,
+                ability_name=ability_name,
+                tool_args=tool_args or {},
+                context=context or {},
+            ),
         )
 
     async def emit_ability_result(
@@ -240,16 +266,16 @@ class EventBus:
         result: Any = None,
         error: str | None = None,
     ) -> int:
-        return await self.emit(
+        return await self.emit_model(
             EventType.ABILITY_RESULT,
-            {
-                "request_id": request_id,
-                "agent_name": agent_name,
-                "ability_name": ability_name,
-                "success": success,
-                "result": result,
-                "error": error,
-            },
+            AbilityResultPayload(
+                request_id=request_id,
+                agent_name=agent_name,
+                ability_name=ability_name,
+                success=success,
+                result=result,
+                error=error,
+            ),
         )
 
     async def emit_session_created(
@@ -260,15 +286,20 @@ class EventBus:
         parent_session_id: str | None = None,
         fork_point_node_id: str | None = None,
     ) -> int:
-        return await self.emit(
+        from ghrah.protocol.types import SessionCreatedPayload
+
+        return await self.emit_model(
             EventType.SESSION_CREATED,
-            {
-                "agent_name": agent_name,
-                "session_id": session_id,
-                "branch_name": branch_name,
-                "parent_session_id": parent_session_id,
-                "fork_point_node_id": fork_point_node_id,
-            },
+            SessionCreatedPayload(
+                agent_name=agent_name,
+                session=SessionInfoPayload(
+                    session_id=session_id,
+                    agent_name=agent_name,
+                    branch_name=branch_name,
+                    parent_session_id=parent_session_id,
+                    fork_point_node_id=fork_point_node_id,
+                ),
+            ),
         )
 
     async def emit_session_switched(
@@ -277,13 +308,18 @@ class EventBus:
         session_id: str,
         branch_name: str,
     ) -> int:
-        return await self.emit(
+        from ghrah.protocol.types import SessionSwitchedPayload
+
+        return await self.emit_model(
             EventType.SESSION_SWITCHED,
-            {
-                "agent_name": agent_name,
-                "session_id": session_id,
-                "branch_name": branch_name,
-            },
+            SessionSwitchedPayload(
+                agent_name=agent_name,
+                session=SessionInfoPayload(
+                    session_id=session_id,
+                    agent_name=agent_name,
+                    branch_name=branch_name,
+                ),
+            ),
         )
 
     async def emit_session_archived(
@@ -291,12 +327,14 @@ class EventBus:
         agent_name: str,
         session_id: str,
     ) -> int:
-        return await self.emit(
+        from ghrah.protocol.types import SessionArchivedPayload
+
+        return await self.emit_model(
             EventType.SESSION_ARCHIVED,
-            {
-                "agent_name": agent_name,
-                "session_id": session_id,
-            },
+            SessionArchivedPayload(
+                agent_name=agent_name,
+                session_id=session_id,
+            ),
         )
 
     async def emit_session_deleted(
@@ -304,10 +342,12 @@ class EventBus:
         agent_name: str,
         session_id: str,
     ) -> int:
-        return await self.emit(
+        from ghrah.protocol.types import SessionDeletedPayload
+
+        return await self.emit_model(
             EventType.SESSION_DELETED,
-            {
-                "agent_name": agent_name,
-                "session_id": session_id,
-            },
+            SessionDeletedPayload(
+                agent_name=agent_name,
+                session_id=session_id,
+            ),
         )

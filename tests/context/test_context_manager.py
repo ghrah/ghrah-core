@@ -20,7 +20,7 @@ from ghrah.chat.message import ChatMessage
 from ghrah.context.manager import ContextManager
 from ghrah.context.node import ContextNode
 from ghrah.core.config import AgentConfig
-from ghrah.core.message import Message
+from ghrah.core.message import AgentMessage as Message
 
 # ----------------------------------------------------------------
 # 辅助工厂

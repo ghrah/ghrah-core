@@ -20,7 +20,8 @@ from ghrah.core.exceptions import (
     CommunicationTimeoutError,
     RoutingError,
 )
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 
 def _make_async_response(response: Message) -> asyncio.coroutines:

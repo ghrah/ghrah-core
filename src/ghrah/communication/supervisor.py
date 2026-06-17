@@ -25,7 +25,7 @@ from ghrah.communication.errors import (
 from ghrah.communication.registry import AgentRegistry
 from ghrah.communication.router import MessageRouter
 from ghrah.core.ability_protocol import AbilityProtocol
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage, MessageType
 from ghrah.types.config_types import AgentConfig
 
 if TYPE_CHECKING:
@@ -175,7 +175,7 @@ class SupervisorActor:
         agents = self._registry.list_agents()
         return [info.to_dict() for info in agents]
 
-    async def route_message(self, message: Message, timeout: float | None = None) -> Message:
+    async def route_message(self, message: AgentMessage, timeout: float | None = None) -> AgentMessage:
         """路由消息到目标 Agent。
 
         超时优先级：
@@ -267,7 +267,7 @@ class SupervisorActor:
         Returns:
             所有 Agent 回复内容列表
         """
-        message = Message(
+        message = AgentMessage(
             sender=sender,
             recipient="*",
             content=content,
@@ -301,7 +301,7 @@ class SupervisorActor:
         if not self._registry.exists(to_agent):
             raise AgentNotFoundError(to_agent)
 
-        message = Message(
+        message = AgentMessage(
             sender=from_agent,
             recipient=to_agent,
             content=content,

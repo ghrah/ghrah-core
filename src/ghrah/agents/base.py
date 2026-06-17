@@ -69,7 +69,7 @@ from ghrah.core.exceptions import (
     HookError,
 )
 from ghrah.core.llm_protocol import LLMProtocol, LLMResponseProtocol
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage, MessageType
 from ghrah.types.config_types import AgentConfig
 from ghrah.types.results import ActionOutcome, ActionResult
 
@@ -130,9 +130,9 @@ class ActorAgent:
         self._command_sender: Any = None
         self._event_bus: Any = None
 
-        # 框架级消息历史（Message 对象，使用自有 ChatMessage 格式）
-        # ContextManager 管理 ChatMessage 消息，这里保留框架 Message 对象的记录
-        self._message_history: list[Message] = []
+        # 框架级消息历史（AgentMessage 对象，使用自有 ChatMessage 格式）
+        # ContextManager 管理 ChatMessage 消息，这里保留框架 AgentMessage 对象的记录
+        self._message_history: list[AgentMessage] = []
 
         logger.info(f"ActorAgent[{config.name}] created")
 
@@ -402,7 +402,7 @@ class ActorAgent:
     # 核心驱动循环
     # ----------------------------------------------------------------
 
-    async def receive(self, message: Message) -> Message:
+    async def receive(self, message: AgentMessage) -> AgentMessage:
         """接收并处理消息 — 驱动执行循环。
 
         LLM 调用移入 _action 层，receive 不再直接传递 llm。
@@ -491,7 +491,7 @@ class ActorAgent:
             raise
         except Exception as e:
             logger.error(f"ActorAgent[{self.config.name}] error in drive loop: {e}")
-            error_reply = Message(
+            error_reply = AgentMessage(
                 sender=self.config.name,
                 recipient=message.sender,
                 content=f"Error: {e}",
@@ -941,7 +941,7 @@ class ActorAgent:
             agent_name=self.config.name,
         )
 
-    def _build_response(self, original: Message) -> Message:
+    def _build_response(self, original: AgentMessage) -> AgentMessage:
         """根据循环结果构建最终回复消息。
 
         Args:
@@ -971,7 +971,7 @@ class ActorAgent:
                 content_blocks = [block_to_dict(b) for b in msg.content_blocks]
                 break
 
-        reply = Message.create_reply(
+        reply = AgentMessage.create_reply(
             original=original,
             content=content,
             msg_type=MessageType.RESULT,
@@ -1164,7 +1164,7 @@ class ActorAgent:
         Returns:
             AI 回复文本
         """
-        message = Message(
+        message = AgentMessage(
             sender=sender,
             recipient=self.config.name,
             content=content,
@@ -1237,7 +1237,7 @@ class ActorAgent:
 
         logger.info(f"ActorAgent[{self.config.name}] reset")
 
-    async def send(self, target: str, content: str) -> Message:
+    async def send(self, target: str, content: str) -> AgentMessage:
         """向其他 Agent 发送消息。
 
         通过构造函数注入的 Supervisor handle 路由消息，
@@ -1259,7 +1259,7 @@ class ActorAgent:
                 "No supervisor configured, cannot send message to other agents",
             )
 
-        message = Message(
+        message = AgentMessage(
             sender=self.config.name,
             recipient=target,
             content=content,

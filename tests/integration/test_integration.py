@@ -28,7 +28,8 @@ from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import TextBlock
 from ghrah.chat.format import LLMResponse
 from ghrah.core.config import AgentConfig
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 # ── Helpers ──
 

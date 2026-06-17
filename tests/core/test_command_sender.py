@@ -116,5 +116,5 @@ class TestHITLResponseHandling:
 
         result = await router._handle_hitl_response(message, "session-1", "req-1")
 
-        assert result.payload.get("success") is False
-        assert "not found" in result.payload.get("error", "")
+        assert result.payload.success is False
+        assert "not found" in result.payload.error

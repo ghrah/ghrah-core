@@ -36,7 +36,7 @@ from ghrah.core.exceptions import (
 )
 from ghrah.core.hitl import HITLFutureStore, HITLResult
 from ghrah.core.llm_protocol import LLMProtocol, LLMResponseProtocol
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage, MessageType
 from ghrah.core.supervisor_protocol import SupervisorProtocol
 from ghrah.core.window_protocol import (
     ContextManagerProtocol,
@@ -102,7 +102,7 @@ __all__ = [
     "LLMError",
     "RegistryError",
     # 消息
-    "Message",
+    "AgentMessage",
     "MessageType",
 ]
 

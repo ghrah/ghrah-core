@@ -19,8 +19,10 @@ from ghrah.protocol.types import (
     EventType,
     Message,
     SystemType,
+    create_command_result,
     create_error,
     create_pong,
+    envelope_from_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,16 +65,13 @@ class WebSocketServer:
 
             await self._connection_manager.send_to(
                 session_id,
-                Message(
-                    type=SystemType.COMMAND_RESULT.value,
-                    payload={
-                        "success": True,
-                        "data": {
-                            "session_id": session_id,
-                            "message": "Connected to ghrah-core",
-                        },
-                    },
+                create_command_result(
                     request_id="connect",
+                    success=True,
+                    data={
+                        "session_id": session_id,
+                        "message": "Connected to ghrah-core",
+                    },
                 ).model_dump_with_timestamp(),
             )
 
@@ -122,7 +121,7 @@ class WebSocketServer:
                 break
 
             try:
-                message = Message(**raw_data)
+                message = envelope_from_dict(raw_data)
             except Exception as e:
                 error_msg = create_error(
                     code="INVALID_MESSAGE",
@@ -166,7 +165,10 @@ class WebSocketServer:
                     continue
 
             known_event_types = {e.value for e in EventType}
-            if message.type in known_event_types and message.type != CommandType.HITL_RESPONSE.value:
+            if (
+                message.type in known_event_types
+                and message.type != CommandType.HITL_RESPONSE.value
+            ):
                 await self._router.handle_event(message, session_id)
                 continue
 

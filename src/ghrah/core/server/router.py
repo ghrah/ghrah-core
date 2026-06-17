@@ -8,6 +8,8 @@ import asyncio
 import logging
 from typing import Any
 
+from pydantic import BaseModel
+
 from ghrah.communication.errors import RegistryError
 from ghrah.communication.supervisor import SupervisorActor
 from ghrah.core.ability_protocol import AbilityProtocol
@@ -22,16 +24,30 @@ from ghrah.protocol.types import (
     CORE_COMMANDS,
     PERSIST_COMMANDS,
     SESSION_COMMANDS,
+    AbilityResultPayload,
+    BroadcastMessagePayload,
     CommandType,
+    DelegatePayload,
+    ExecuteAbilityPayload,
+    GetAgentInfoPayload,
+    HITLResponsePayload,
+    InitClusterPayload,
     Message,
+    RegisterAbilityPayload,
+    SendMessagePayload,
     SessionArchivePayload,
     SessionCreatePayload,
     SessionDeletePayload,
     SessionListPayload,
     SessionSwitchPayload,
     SpawnAgentPayload,
+    SubscribePayload,
+    TerminateAgentPayload,
+    UnregisterAbilityPayload,
+    UnsubscribePayload,
     create_command_result,
     create_error,
+    expect_payload,
     generate_request_id,
 )
 from ghrah.types.config_types import AgentConfig
@@ -104,7 +120,12 @@ class MessageRouter:
             return result
 
         if hasattr(result, "payload"):
-            return result.payload if result.payload else {"success": False}
+            payload = result.payload
+            if isinstance(payload, dict):
+                return payload or {"success": False}
+            if isinstance(payload, BaseModel):
+                return payload.model_dump()
+            return {"success": False}
 
         return {"success": False}
 
@@ -196,7 +217,10 @@ class MessageRouter:
         message: Message,
         session_id: str,
     ) -> bool:
-        request_id = message.request_id or message.payload.get("request_id")
+        payload = message.payload
+        request_id = message.request_id or (
+            payload.get("request_id") if isinstance(payload, dict) else None
+        )
         if not request_id:
             logger.warning("command_result missing request_id, ignoring")
             return False
@@ -229,7 +253,8 @@ class MessageRouter:
         message: Message,
         session_id: str,
     ) -> bool:
-        request_id = message.request_id or message.payload.get("request_id")
+        payload = expect_payload(message, AbilityResultPayload)
+        request_id = message.request_id or payload.request_id
         if not request_id:
             logger.warning("ability_result missing request_id, ignoring")
             return False
@@ -245,12 +270,11 @@ class MessageRouter:
             return False
 
         if not future.done():
-            ability_payload = message.payload
             result_msg = create_command_result(
                 request_id=request_id,
-                success=ability_payload.get("success", False),
-                data=ability_payload.get("result"),
-                error=ability_payload.get("error"),
+                success=payload.success,
+                data=payload.result,
+                error=payload.error,
             )
             future.set_result(result_msg)
             logger.info(
@@ -336,9 +360,7 @@ class MessageRouter:
     async def _handle_execute_ability(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import ExecuteAbilityPayload
-
-        payload = ExecuteAbilityPayload(**message.payload)
+        payload = expect_payload(message, ExecuteAbilityPayload)
         logger.info(
             "_handle_execute_ability: agent=%s ability=%s request_id=%s "
             "from_session=%s",
@@ -405,7 +427,7 @@ class MessageRouter:
     async def _handle_spawn_agent(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        payload = SpawnAgentPayload(**message.payload)
+        payload = expect_payload(message, SpawnAgentPayload)
         logger.info(
             "_handle_spawn_agent: name=%s agent_config=%s request_id=%s",
             payload.config.name, payload.config.agent_config_name, request_id,
@@ -418,8 +440,16 @@ class MessageRouter:
             system_prompt=payload.config.system_prompt,
             max_iterations=payload.config.max_iterations,
             communication_timeout=payload.config.communication_timeout,
-            window=build_window_from_dict(payload.config.window) if payload.config.window else None,
-            context=build_context_from_dict(payload.config.context) if payload.config.context else None,
+            window=(
+                build_window_from_dict(payload.config.window)
+                if payload.config.window
+                else None
+            ),
+            context=(
+                build_context_from_dict(payload.config.context)
+                if payload.config.context
+                else None
+            ),
             model_overrides=(
                 build_model_overrides_from_dict(payload.config.model_overrides)
                 if payload.config.model_overrides
@@ -530,9 +560,7 @@ class MessageRouter:
     async def _handle_terminate_agent(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import TerminateAgentPayload
-
-        payload = TerminateAgentPayload(**message.payload)
+        payload = expect_payload(message, TerminateAgentPayload)
         await self._supervisor.terminate_agent(payload.name)
 
         await self._event_bus.emit_agent_terminated(agent_name=payload.name)
@@ -546,9 +574,7 @@ class MessageRouter:
     async def _handle_send_message(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import SendMessagePayload
-
-        payload = SendMessagePayload(**message.payload)
+        payload = expect_payload(message, SendMessagePayload)
         result = await self._supervisor.send(
             target=payload.target,
             content=payload.content,
@@ -564,9 +590,7 @@ class MessageRouter:
     async def _handle_broadcast_message(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import BroadcastMessagePayload
-
-        payload = BroadcastMessagePayload(**message.payload)
+        payload = expect_payload(message, BroadcastMessagePayload)
         results = await self._supervisor.broadcast(
             content=payload.content,
             sender=payload.sender,
@@ -580,9 +604,7 @@ class MessageRouter:
     async def _handle_register_ability(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import RegisterAbilityPayload
-
-        payload = RegisterAbilityPayload(**message.payload)
+        payload = expect_payload(message, RegisterAbilityPayload)
         result = await self._supervisor.register_ability_for_agent(
             agent_name=payload.agent_name,
             ability_type=payload.ability.ability_type,
@@ -597,9 +619,7 @@ class MessageRouter:
     async def _handle_unregister_ability(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import UnregisterAbilityPayload
-
-        payload = UnregisterAbilityPayload(**message.payload)
+        payload = expect_payload(message, UnregisterAbilityPayload)
         try:
             agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
             if agent_handle is None:
@@ -628,14 +648,15 @@ class MessageRouter:
     async def _handle_get_agent_info(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
+        payload = expect_payload(message, GetAgentInfoPayload)
         agent_handle = await self._supervisor.get_agent_handle(
-            name=message.payload.get("name", ""),
+            name=payload.name,
         )
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,
                 success=False,
-                error=f"Agent '{message.payload.get('name', '')}' not found",
+                error=f"Agent '{payload.name}' not found",
             )
         state = agent_handle.get_state()
         abilities = agent_handle.get_abilities()
@@ -643,7 +664,7 @@ class MessageRouter:
             request_id=request_id,
             success=True,
             data={
-                "name": message.payload.get("name", ""),
+                "name": payload.name,
                 "state": state,
                 "abilities": abilities,
             },
@@ -652,6 +673,7 @@ class MessageRouter:
     async def _handle_init_cluster(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
+        payload = expect_payload(message, InitClusterPayload)
         agents = await self._supervisor.list_agents()
         return create_command_result(
             request_id=request_id,
@@ -659,7 +681,7 @@ class MessageRouter:
             data={
                 "initialized": True,
                 "active_agents": len(agents),
-                "config": message.payload.get("config", {}),
+                "config": payload.config,
             },
         )
 
@@ -718,9 +740,7 @@ class MessageRouter:
     async def _handle_delegate(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import DelegatePayload
-
-        payload = DelegatePayload(**message.payload)
+        payload = expect_payload(message, DelegatePayload)
         result = await self._supervisor.delegate(
             from_agent=payload.from_agent,
             to_agent=payload.to_agent,
@@ -736,9 +756,7 @@ class MessageRouter:
     async def _handle_subscribe(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import SubscribePayload
-
-        payload = SubscribePayload(**message.payload)
+        payload = expect_payload(message, SubscribePayload)
         self._connection_manager.subscribe(
             session_id=session_id,
             agent_names=payload.agent_names,
@@ -754,9 +772,7 @@ class MessageRouter:
     async def _handle_unsubscribe(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        from ghrah.protocol.types import UnsubscribePayload
-
-        payload = UnsubscribePayload(**message.payload)
+        payload = expect_payload(message, UnsubscribePayload)
         self._connection_manager.unsubscribe(
             session_id=session_id,
             agent_names=payload.agent_names,
@@ -772,27 +788,22 @@ class MessageRouter:
     async def _handle_hitl_response(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        """将 HITL 审批结果路由到对应的 Agent。"""
-        payload = message.payload
-        agent_name = payload.get("agent_name", "")
-        ability_name = payload.get("ability_name", "")
-        tool_call_id = payload.get("tool_call_id", "")
-        approved = payload.get("approved", False)
-        result = payload.get("result")
+        """将 HITL 审批结果路由到对应的 Agent（单体路径）。"""
+        payload = expect_payload(message, HITLResponsePayload)
 
-        agent_handle = await self._supervisor.get_agent_handle(agent_name)
+        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,
                 success=False,
-                error=f"Agent '{agent_name}' not found",
+                error=f"Agent '{payload.agent_name}' not found",
             )
 
         resolved = agent_handle.receive_hitl_response(
-            ability_name=ability_name,
-            tool_call_id=tool_call_id,
-            approved=approved,
-            result=result,
+            ability_name=payload.ability_name,
+            tool_call_id=payload.tool_call_id,
+            approved=payload.approved,
+            result=payload.result,
         )
 
         return create_command_result(
@@ -808,7 +819,7 @@ class MessageRouter:
     async def _handle_session_create(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        payload = SessionCreatePayload(**message.payload)
+        payload = expect_payload(message, SessionCreatePayload)
         agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
@@ -844,7 +855,7 @@ class MessageRouter:
     async def _handle_session_switch(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        payload = SessionSwitchPayload(**message.payload)
+        payload = expect_payload(message, SessionSwitchPayload)
         agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
@@ -877,7 +888,7 @@ class MessageRouter:
     async def _handle_session_list(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        payload = SessionListPayload(**message.payload)
+        payload = expect_payload(message, SessionListPayload)
         agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
@@ -897,7 +908,7 @@ class MessageRouter:
     async def _handle_session_archive(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        payload = SessionArchivePayload(**message.payload)
+        payload = expect_payload(message, SessionArchivePayload)
         agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
@@ -917,7 +928,7 @@ class MessageRouter:
     async def _handle_session_delete(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        payload = SessionDeletePayload(**message.payload)
+        payload = expect_payload(message, SessionDeletePayload)
         agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(

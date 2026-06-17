@@ -25,7 +25,7 @@ class MessageType(str, Enum):
 
 
 @dataclass
-class Message:
+class AgentMessage:
     """Agent 间通信的统一消息对象。
 
     Attributes:
@@ -40,6 +40,10 @@ class Message:
         content_blocks: 结构化内容块列表（序列化后的字典），
             保留 reasoning/text 等类型区分。
             为 None 时表示仅有纯文本 content。
+
+    Note:
+        类名 AgentMessage 用于区别于 ghrah.protocol.types.Envelope（别名 Message）。
+        本类是 Agent 间通信的领域消息，不是 WebSocket 信封。
     """
 
     sender: str
@@ -96,11 +100,11 @@ class Message:
 
     @staticmethod
     def create_reply(
-        original: Message,
+        original: AgentMessage,
         content: str,
         msg_type: MessageType | None = None,
         content_blocks: list[dict[str, Any]] | None = None,
-    ) -> Message:
+    ) -> AgentMessage:
         """便捷方法：基于原始消息创建回复。
 
         Args:
@@ -110,9 +114,9 @@ class Message:
             content_blocks: 结构化内容块（序列化后的字典），保留 reasoning/text 等类型区分
 
         Returns:
-            新的回复 Message
+            新的回复 AgentMessage
         """
-        return Message(
+        return AgentMessage(
             sender=original.recipient,
             recipient=original.sender,
             content=content,
@@ -123,6 +127,6 @@ class Message:
 
     def __repr__(self) -> str:
         return (
-            f"Message(id={self.id!r}, {self.sender!r} -> {self.recipient!r}, "
+            f"AgentMessage(id={self.id!r}, {self.sender!r} -> {self.recipient!r}, "
             f"type={self.type.value!r}, content={self.content[:50]!r}...)"
         )

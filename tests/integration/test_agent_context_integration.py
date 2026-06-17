@@ -30,7 +30,8 @@ from ghrah.chat.message import ChatMessage
 from ghrah.context.manager import ContextManager
 from ghrah.core.config import AgentConfig, ContextConfig
 from ghrah.core.exceptions import AgentError
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 # ----------------------------------------------------------------
 # 辅助工具

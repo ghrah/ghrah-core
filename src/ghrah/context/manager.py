@@ -36,7 +36,7 @@ from ghrah.types.results import ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
-    from ghrah.core.message import Message
+    from ghrah.core.message import AgentMessage
     from ghrah.types.config_types import AgentConfig
 
 logger = logging.getLogger(__name__)
@@ -596,7 +596,7 @@ class ContextManager:
 
     def build_execution_context(
         self,
-        message: Message | None = None,
+        message: AgentMessage | None = None,
         config: AgentConfig | None = None,
         system_prompt: str | None = None,
         context_filter: Callable | None = None,

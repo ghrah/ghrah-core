@@ -28,7 +28,8 @@ from ghrah.chat.format import LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.core.config import AgentConfig
 from ghrah.core.exceptions import AgentError, HookError
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 # ----------------------------------------------------------------
 # 测试用 Mock 类

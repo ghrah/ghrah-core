@@ -4,7 +4,8 @@
 
 """Message 核心数据类测试"""
 
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 
 class TestMessage:

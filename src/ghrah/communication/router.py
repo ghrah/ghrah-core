@@ -19,7 +19,7 @@ from ghrah.core.exceptions import (
     CommunicationTimeoutError,
     RoutingError,
 )
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage, MessageType
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ DEFAULT_TIMEOUT = 300.0
 class MessageRouter:
     """消息路由器。
 
-    根据 Message.recipient 路由消息到目标 Agent：
+    根据 AgentMessage.recipient 路由消息到目标 Agent：
     - 指定名称：路由到单个 Agent 并等待响应
     - "*"：广播到所有已注册 Agent
 
@@ -48,7 +48,7 @@ class MessageRouter:
         self._registry = registry
         self._default_timeout = default_timeout
 
-    async def route(self, message: Message, timeout: float | None = None) -> Message:
+    async def route(self, message: AgentMessage, timeout: float | None = None) -> AgentMessage:
         """路由消息到目标 Agent 并等待响应。
 
         Args:
@@ -102,7 +102,7 @@ class MessageRouter:
                 f"Failed to route message from {message.sender} to {target}: {e}"
             ) from e
 
-    async def broadcast(self, message: Message, exclude: str | None = None) -> list[Message]:
+    async def broadcast(self, message: AgentMessage, exclude: str | None = None) -> list[AgentMessage]:
         """广播消息到所有已注册 Agent。
 
         并行发送到所有 Agent，收集所有响应。
@@ -127,7 +127,7 @@ class MessageRouter:
         tasks = []
         for info in targets:
             # 为每个目标创建独立的消息（保持 sender 不变，recipient 为具体 Agent）
-            target_message = Message(
+            target_message = AgentMessage(
                 sender=message.sender,
                 recipient=info.name,
                 content=message.content,
@@ -144,7 +144,7 @@ class MessageRouter:
             raise RoutingError(f"Broadcast failed: {e}") from e
 
         # 收集成功的响应，记录错误
-        results: list[Message] = []
+        results: list[AgentMessage] = []
         for i, resp in enumerate(responses):
             if isinstance(resp, Exception):
                 logger.error(f"Broadcast to {targets[i].name} failed: {resp}")
@@ -160,7 +160,7 @@ class MessageRouter:
         sender: str = "user",
         msg_type: MessageType = MessageType.CHAT,
         timeout: float | None = None,
-    ) -> Message:
+    ) -> AgentMessage:
         """便捷方法：发送消息并等待响应。
 
         Args:
@@ -173,7 +173,7 @@ class MessageRouter:
         Returns:
             目标 Agent 的回复
         """
-        message = Message(
+        message = AgentMessage(
             sender=sender,
             recipient=target,
             content=content,
