@@ -7,7 +7,7 @@
 测试 RemoteAbilityExecutor 实现：
 - execute_ability: 发送请求到 Subject 并等待结果
 - execute_tool_calls: 并行发送多个 tool_calls
-- run_hooks: 始终返回 None（Core 端不运行 Hook）
+- run_hooks: 已从远程执行器接口移除
 - handle_hitl_hook_result: 始终返回 True（HITL 在 Subject 端处理）
 - resolve_ability_result: 遗留兼容接口，始终返回 False
 - 超时和异常处理
@@ -21,7 +21,7 @@ from ghrah.protocol.types import CommandType
 from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.executor import RemoteAbilityExecutor
-from ghrah.abilities.hooks import HookPoint, HookResult
+from ghrah.abilities.hooks import HookResult
 from ghrah.chat.content import ToolCallBlock
 from ghrah.core.command_sender import CommandSender
 
@@ -298,26 +298,14 @@ class TestRemoteExecuteToolCalls:
         assert "timed out" in results[0]["action_result"].data["error"].lower()
 
 
-# ─── run_hooks 测试 ───
+# ─── hook runner surface 测试 ───
 
 
-class TestRemoteRunHooks:
-    """RemoteAbilityExecutor.run_hooks 测试。"""
+class TestRemoteHookRunnerSurface:
+    """RemoteAbilityExecutor 不暴露本地 HookRunner 执行入口。"""
 
-    @pytest.mark.asyncio
-    async def test_run_hooks_returns_none(self, remote_executor, ability_context):
-        """测试分布式模式下 run_hooks 始终返回 None。"""
-        result = await remote_executor.run_hooks(HookPoint.PRE_EXECUTE, ability_context)
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_run_hooks_post_execute_returns_none(self, remote_executor, ability_context):
-        """测试 POST_EXECUTE Hook 也返回 None。"""
-        action_result = ActionResult(outcome=ActionOutcome.SUCCESS, data={})
-        result = await remote_executor.run_hooks(
-            HookPoint.POST_EXECUTE, ability_context, action_result
-        )
-        assert result is None
+    def test_run_hooks_method_removed(self, remote_executor):
+        assert not hasattr(remote_executor, "run_hooks")
 
 
 # ─── handle_hitl_hook_result 测试 ───

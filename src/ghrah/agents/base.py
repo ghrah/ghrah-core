@@ -44,6 +44,9 @@ from typing import Any
 
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.errors import AbilityNotFoundError
+from ghrah.abilities.hook_context import HookContext
+from ghrah.abilities.hook_runner import HookRunner
+from ghrah.abilities.hook_store import HookListView, HookStore
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import block_to_dict
 from ghrah.chat.message import ChatMessage
@@ -67,7 +70,6 @@ from ghrah.core.events import (
 from ghrah.core.exceptions import (
     AgentError,
     AgentInitializationError,
-    HookError,
 )
 from ghrah.core.llm_protocol import LLMProtocol, LLMResponseProtocol
 from ghrah.core.message import AgentMessage, MessageType
@@ -124,7 +126,11 @@ class ActorAgent:
         self._initialized = False
         self._abilities: dict[str, AbilityProtocol] = {}
         self._bound_tools: list[dict[str, Any]] = []
-        self._all_hooks: list[Hook] = []
+        self._hook_store = HookStore()
+        self._hook_runner = HookRunner(self._hook_store)
+        self._hook_view = self._hook_store.view()
+        if hasattr(self._ability_executor, "update_hook_runner"):
+            self._ability_executor.update_hook_runner(self._hook_runner)
         self._message_queue: asyncio.Queue[ChatMessage] = asyncio.Queue()
         self._iteration_state = IterationState()
 
@@ -137,6 +143,17 @@ class ActorAgent:
         self._message_history: list[AgentMessage] = []
 
         logger.info(f"ActorAgent[{config.name}] created")
+
+    @property
+    def _all_hooks(self) -> HookListView:
+        """Compatibility view backed by HookStore."""
+
+        return self._hook_view
+
+    @_all_hooks.setter
+    def _all_hooks(self, hooks: list[Hook]) -> None:
+        self._hook_store.remove_owner(HookStore.AGENT_OWNER)
+        self._hook_store.add_hooks(HookStore.AGENT_OWNER, hooks)
 
     def inject_command_sender(self, command_sender: Any, event_bus: Any) -> None:
         """由 SupervisorActor 在服务器模式下注入命令发送器和事件总线。
@@ -208,10 +225,7 @@ class ActorAgent:
 
         # 收集 hooks
         ability_hooks = ability.get_hooks()
-        self._all_hooks.extend(ability_hooks)
-
-        # 同步更新 executor 的 hooks
-        self._ability_executor.update_hooks(self._all_hooks)
+        self._hook_store.add_hooks(ability.name, ability_hooks)
 
         self._abilities[ability.name] = ability
 
@@ -250,12 +264,7 @@ class ActorAgent:
             ]
 
         # 移除对应的 hooks
-        ability_hooks = ability.get_hooks()
-        ability_hook_ids = {id(h) for h in ability_hooks}
-        self._all_hooks = [h for h in self._all_hooks if id(h) not in ability_hook_ids]
-
-        # 同步更新 executor 的 hooks
-        self._ability_executor.update_hooks(self._all_hooks)
+        self._hook_store.remove_owner(ability.name)
 
         logger.info(f"ActorAgent[{self.config.name}] unregistered ability: {name}")
 
@@ -776,19 +785,6 @@ class ActorAgent:
     # Hook 运行机制
     # ----------------------------------------------------------------
 
-    # drive_loop 级和 action 级 hook 在 Agent 端直接执行，
-    # ability 级 hook 由 AbilityExecutor 管理（远程模式下在 Subject 端执行）。
-    _LOCAL_HOOK_POINTS: frozenset[HookPoint] = frozenset(
-        {
-            HookPoint.BEFORE_ACTION,
-            HookPoint.AFTER_ACTION,
-            HookPoint.ON_ERROR,
-            HookPoint.ON_MAX_ITERATIONS,
-            HookPoint.PRE_LLM_CALL,
-            HookPoint.POST_LLM_CALL,
-        }
-    )
-
     async def _run_hooks(
         self,
         point: HookPoint,
@@ -796,11 +792,6 @@ class ActorAgent:
         result: ActionResult | None = None,
     ) -> HookResult | None:
         """运行所有注册的指定触发点的 hooks。
-
-        drive_loop 级和 action 级 hook 由 Agent 直接执行（遍历 self._all_hooks），
-        确保在远程模式下这些控制流 hook 仍然生效（如 ConversationDoneHook 终止循环）。
-        ability 级 hook（PRE_EXECUTE, POST_EXECUTE）委托给 AbilityExecutor，
-        在远程模式下由 Subject 端执行（含 HITL 审批等）。
 
         Args:
             point: Hook 触发点
@@ -813,67 +804,8 @@ class ActorAgent:
         Raises:
             HookError: hook 执行出错时
         """
-        if point in self._LOCAL_HOOK_POINTS:
-            return await self._run_local_hooks(point, context, result)
-        return await self._ability_executor.run_hooks(point, context, result)
-
-    async def _run_local_hooks(
-        self,
-        point: HookPoint,
-        context: AbilityExecutionContext,
-        result: ActionResult | None = None,
-    ) -> HookResult | None:
-        """直接遍历 self._all_hooks 执行匹配的 hook。
-
-        用于 drive_loop 级和 action 级 hook，确保在远程模式下
-        控制流 hook（如 ConversationDoneHook终止循环）仍然生效。
-
-        逻辑与 LocalAbilityExecutor.run_hooks() 一致：
-        匹配 hook_point 且 should_trigger 返回 True 的 hook 才执行，
-        多个 hook 触发时合并结果（后者覆盖前者）。
-
-        Args:
-            point: Hook 触发点
-            context: 当前执行上下文
-            result: ActionResult（用于 POST_EXECUTE 等触发点）
-
-        Returns:
-            合并后的 HookResult，如果没有 hook 触发则返回 None
-
-        Raises:
-            HookError: hook 执行出错时
-        """
-        merged: HookResult | None = None
-
-        for hook in self._all_hooks:
-            if hook.hook_point != point:
-                continue
-
-            try:
-                should_fire = await hook.should_trigger(context)
-            except Exception as e:
-                raise HookError(
-                    point.value,
-                    f"should_trigger failed for {type(hook).__name__}: {e}",
-                ) from e
-
-            if not should_fire:
-                continue
-
-            try:
-                hook_result = await hook.execute(context, result)
-            except Exception as e:
-                raise HookError(
-                    point.value,
-                    f"execute failed for {type(hook).__name__}: {e}",
-                ) from e
-
-            if merged is None:
-                merged = hook_result
-            else:
-                merged = merged.merge(hook_result)
-
-        return merged
+        hook_context = HookContext.from_ability_context(point, context, result)
+        return await self._hook_runner.run(hook_context)
 
     # ----------------------------------------------------------------
     # 上下文构建和回复

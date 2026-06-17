@@ -30,13 +30,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ghrah.abilities.context import AbilityExecutionContext
+from ghrah.abilities.hook_context import HookContext
+from ghrah.abilities.hook_runner import HookRunner
+from ghrah.abilities.hook_store import HookStore
 from ghrah.abilities.hooks import HookPoint, HookResult
 from ghrah.abilities.paths import ABILITY_PATH_SPECS
 from ghrah.chat.content import ToolCallBlock
 from ghrah.core.ability_protocol import AbilityProtocol
 from ghrah.core.event_publisher import EventPublisher
 from ghrah.core.events import HITLRequestEvent
-from ghrah.core.exceptions import HookError
 from ghrah.core.hitl import HITLFutureStore, HITLResult
 from ghrah.protocol.types import CommandType
 from ghrah.types.results import ActionOutcome, ActionResult
@@ -63,7 +65,6 @@ class AbilityExecutor(ABC):
     子类必须实现：
     - execute_ability(): 执行单个 Ability
     - execute_tool_calls(): 执行一组 tool_calls
-    - run_hooks(): 运行 Hook
     - handle_hitl_hook_result(): 处理 HITL Hook 结果
     - update_hooks(): 同步 Hook 列表
     - update_event_publisher(): 同步事件发布器
@@ -109,25 +110,6 @@ class AbilityExecutor(ABC):
 
         Returns:
             结果列表，每个 dict 包含 "ability_name", "action_result", "tool_call_id"
-        """
-        ...
-
-    @abstractmethod
-    async def run_hooks(
-        self,
-        point: HookPoint,
-        context: AbilityExecutionContext,
-        result: ActionResult | None = None,
-    ) -> HookResult | None:
-        """运行指定触发点的所有 Hooks。
-
-        Args:
-            point: Hook 触发点
-            context: 当前执行上下文
-            result: ActionResult（POST_EXECUTE 时传入）
-
-        Returns:
-            合并后的 HookResult，如果没有 hook 触发则返回 None
         """
         ...
 
@@ -213,6 +195,7 @@ class LocalAbilityExecutor(AbilityExecutor):
         self,
         agent_name: str,
         hooks: list[Hook] | None = None,
+        hook_runner: HookRunner | None = None,
         event_publisher: EventPublisher | None = None,
         hitl_timeout: float = 300.0,
         workspace_root: str | None = None,
@@ -222,12 +205,16 @@ class LocalAbilityExecutor(AbilityExecutor):
         Args:
             agent_name: Agent 名称（用于 HITL Future 的 key）
             hooks: 已注册的 Hook 列表
+            hook_runner: 可选共享 HookRunner（由 ActorAgent 注入）
             event_publisher: 事件发布器（默认 NullEventPublisher）
             hitl_timeout: HITL 等待超时时间（秒）
             workspace_root: 工作区根目录，用于将相对路径解析到沙盒内（None 表示不解析）
         """
         self._agent_name = agent_name
-        self._hooks: list[Hook] = hooks or []
+        self._hook_store = HookStore()
+        if hooks:
+            self._hook_store.add_hooks(HookStore.AGENT_OWNER, hooks)
+        self._hook_runner = hook_runner or HookRunner(self._hook_store)
         if event_publisher is not None:
             self._event_publisher: EventPublisher = event_publisher
         else:
@@ -243,12 +230,18 @@ class LocalAbilityExecutor(AbilityExecutor):
         return self._hitl_store
 
     def update_hooks(self, hooks: list[Hook]) -> None:
-        """同步更新 Hook 列表。
+        """兼容旧接口：替换本地私有 HookStore 中的 hooks。
 
         Args:
             hooks: 最新的 Hook 列表
         """
-        self._hooks = hooks
+        self._hook_store.remove_owner(HookStore.AGENT_OWNER)
+        self._hook_store.add_hooks(HookStore.AGENT_OWNER, hooks)
+
+    def update_hook_runner(self, hook_runner: HookRunner) -> None:
+        """Use the agent-level HookRunner after ActorAgent wires shared storage."""
+
+        self._hook_runner = hook_runner
 
     def update_event_publisher(self, publisher: EventPublisher) -> None:
         """同步更新事件发布器。
@@ -279,7 +272,9 @@ class LocalAbilityExecutor(AbilityExecutor):
             HookError: Hook 执行出错时
         """
         # PRE_EXECUTE hook（ability 级）
-        hook_result = await self.run_hooks(HookPoint.PRE_EXECUTE, context)
+        hook_result = await self._hook_runner.run(
+            HookContext.from_ability_context(HookPoint.PRE_EXECUTE, context)
+        )
 
         # 处理 Hook 结果
         if hook_result is not None:
@@ -320,7 +315,9 @@ class LocalAbilityExecutor(AbilityExecutor):
         action_result = await ability.execute(context)
 
         # POST_EXECUTE hook（ability 级）
-        await self.run_hooks(HookPoint.POST_EXECUTE, context, action_result)
+        await self._hook_runner.run(
+            HookContext.from_ability_context(HookPoint.POST_EXECUTE, context, action_result)
+        )
 
         return action_result
 
@@ -474,61 +471,6 @@ class LocalAbilityExecutor(AbilityExecutor):
                 resolved[key] = str((Path(self._workspace_root) / value).resolve())
 
         return resolved
-
-    async def run_hooks(
-        self,
-        point: HookPoint,
-        context: AbilityExecutionContext,
-        result: ActionResult | None = None,
-    ) -> HookResult | None:
-        """运行所有注册的指定触发点的 hooks。
-
-        只运行 hook_point 匹配且 should_trigger 返回 True 的 hooks。
-        如果多个 hook 都触发，合并其结果（后者覆盖前者）。
-
-        Args:
-            point: Hook 触发点
-            context: 当前执行上下文
-            result: ActionResult（POST_EXECUTE 时传入）
-
-        Returns:
-            合并后的 HookResult，如果没有 hook 触发则返回 None
-
-        Raises:
-            HookError: hook 执行出错时
-        """
-        merged: HookResult | None = None
-
-        for hook in self._hooks:
-            if hook.hook_point != point:
-                continue
-
-            try:
-                should_fire = await hook.should_trigger(context)
-            except Exception as e:
-                raise HookError(
-                    point.value,
-                    f"should_trigger failed for {type(hook).__name__}: {e}",
-                ) from e
-
-            if not should_fire:
-                continue
-
-            try:
-                hook_result = await hook.execute(context, result)
-            except Exception as e:
-                raise HookError(
-                    point.value,
-                    f"execute failed for {type(hook).__name__}: {e}",
-                ) from e
-
-            # 合并结果：后者覆盖前者
-            if merged is None:
-                merged = hook_result
-            else:
-                merged = merged.merge(hook_result)
-
-        return merged
 
     async def handle_hitl_hook_result(
         self,
@@ -880,21 +822,6 @@ class RemoteAbilityExecutor(AbilityExecutor):
                     data={"error": str(e)},
                 ),
             }
-
-    async def run_hooks(
-        self,
-        point: HookPoint,
-        context: AbilityExecutionContext,
-        result: ActionResult | None = None,
-    ) -> HookResult | None:
-        """分布式模式下 Core 端不运行 Ability 级 Hook。
-
-        Hook 在 Subject 端执行，Core 端只负责发送请求和接收结果。
-
-        Returns:
-            始终返回 None，表示不拦截执行
-        """
-        return None
 
     async def handle_hitl_hook_result(
         self,

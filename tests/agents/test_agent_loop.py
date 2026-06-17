@@ -389,13 +389,11 @@ class TestRunHooks:
 
 
 class TestRunHooksRouting:
-    """测试 _run_hooks 在本地和远程模式下的路由行为。
+    """测试 _run_hooks 在本地和远程模式下的统一 runner 行为。
 
     drive_loop 级和 action 级 hook（BEFORE_ACTION, AFTER_ACTION, ON_ERROR,
     ON_MAX_ITERATIONS, PRE_LLM_CALL, POST_LLM_CALL）始终由 Agent 基类直接执行，
     即使 AbilityExecutor 是 RemoteAbilityExecutor。
-
-    ability 级 hook（PRE_EXECUTE, POST_EXECUTE）委托给 AbilityExecutor。
     """
 
     @pytest.mark.asyncio
@@ -446,8 +444,8 @@ class TestRunHooksRouting:
         assert block_hook.execute_count == 1
 
     @pytest.mark.asyncio
-    async def test_pre_execute_hook_delegates_to_remote_executor(self) -> None:
-        """PRE_EXECUTE hook 在远程模式下委托给 RemoteAbilityExecutor（返回 None）。"""
+    async def test_pre_execute_hook_uses_shared_runner_with_remote_executor(self) -> None:
+        """直接调用 _run_hooks(PRE_EXECUTE) 时使用共享 HookRunner。"""
         from ghrah.abilities.executor import RemoteAbilityExecutor
 
         pre_hook = MockHook(
@@ -464,12 +462,13 @@ class TestRunHooksRouting:
         context = AbilityExecutionContext()
         result = await agent._run_hooks(HookPoint.PRE_EXECUTE, context)
 
-        assert result is None
-        assert pre_hook.execute_count == 0
+        assert result is not None
+        assert result.should_continue is False
+        assert pre_hook.execute_count == 1
 
     @pytest.mark.asyncio
-    async def test_post_execute_hook_delegates_to_remote_executor(self) -> None:
-        """POST_EXECUTE hook 在远程模式下委托给 RemoteAbilityExecutor（返回 None）。"""
+    async def test_post_execute_hook_uses_shared_runner_with_remote_executor(self) -> None:
+        """直接调用 _run_hooks(POST_EXECUTE) 时使用共享 HookRunner。"""
         from ghrah.abilities.executor import RemoteAbilityExecutor
 
         post_hook = MockHook(
@@ -486,16 +485,16 @@ class TestRunHooksRouting:
         context = AbilityExecutionContext()
         result = await agent._run_hooks(HookPoint.POST_EXECUTE, context)
 
-        assert result is None
-        assert post_hook.execute_count == 0
+        assert result is not None
+        assert result.should_continue is False
+        assert post_hook.execute_count == 1
 
     @pytest.mark.asyncio
     async def test_conversation_done_hook_stops_loop_remote(self) -> None:
         """ConversationDoneHook 在 RemoteAbilityExecutor 模式下仍能正确终止循环。
 
-        这是 Bug 1 的核心回归测试：RemoteAbilityExecutor.run_hooks() 始终
-        返回 None 导致 ConversationDoneHook 不触发，循环不会终止。
-        修复后 AFTER_HOOK hook 由 Agent 直接执行，不受 executor 影响。
+        这是 Bug 1 的核心回归测试：AFTER_ACTION hook 必须由 Agent 端共享
+        HookRunner 执行，不受 remote executor 影响。
 
         验证方式：直接调用 _run_hooks(AFTER_ACTION)，确认
         ConversationDoneHook 的 stop 结果正确返回。
