@@ -8,7 +8,8 @@
 而是通过 CommandSender 协议向连接的 Subject 发送命令并等待响应。
 
 MessageRouter 实现此协议，通过 ConnectionManager 将命令转发到 Subject，
-等待 command_result 或 ability_result 响应。
+等待 command_result 响应。execute_ability 的 ability_result 是 Core 确认后
+发布的领域事件，不再作为命令响应。
 """
 
 from __future__ import annotations

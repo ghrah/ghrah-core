@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -28,6 +29,7 @@ from ghrah.protocol.types import (
     BroadcastMessagePayload,
     CommandType,
     DelegatePayload,
+    EventType,
     ExecuteAbilityPayload,
     GetAgentInfoPayload,
     HITLResponsePayload,
@@ -55,6 +57,22 @@ from ghrah.types.config_types import AgentConfig
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class PendingRequest:
+    future: asyncio.Future[Message]
+    session_id: str
+    command_type: str
+    payload: dict[str, Any]
+
+
+def _payload_to_dict(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, BaseModel):
+        return payload.model_dump()
+    if isinstance(payload, dict):
+        return dict(payload)
+    return {}
+
+
 class MessageRouter:
     def __init__(
         self,
@@ -70,8 +88,7 @@ class MessageRouter:
         self._ability_timeout = ability_timeout
         self._default_timeout = default_timeout
 
-        self._pending_requests: dict[str, asyncio.Future[Message]] = {}
-        self._request_sessions: dict[str, str] = {}
+        self._pending_requests: dict[str, PendingRequest] = {}
 
     async def send_command(
         self,
@@ -222,28 +239,34 @@ class MessageRouter:
         message: Message,
         session_id: str,
     ) -> bool:
-        payload = message.payload
-        request_id = message.request_id or (
-            payload.get("request_id") if isinstance(payload, dict) else None
-        )
+        payload = _payload_to_dict(message.payload)
+        request_id = message.request_id or payload.get("request_id")
         if not request_id:
             logger.warning("command_result missing request_id, ignoring")
             return False
 
-        future = self._pending_requests.pop(request_id, None)
-        self._request_sessions.pop(request_id, None)
+        pending = self._pending_requests.pop(request_id, None)
 
-        if future is None:
+        if pending is None:
             logger.debug(
                 f"command_result with request_id={request_id} has no pending request, ignoring"
             )
             return False
 
+        future = pending.future
         if not future.done():
             future.set_result(message)
             logger.info(f"Resolved pending request {request_id} from session {session_id}")
         else:
             logger.warning(f"Pending request {request_id} already resolved, discarding")
+            return True
+
+        if pending.command_type == CommandType.EXECUTE_ABILITY.value:
+            await self._publish_confirmed_ability_result(
+                request_id=request_id,
+                pending=pending,
+                command_result=message,
+            )
 
         return True
 
@@ -258,15 +281,25 @@ class MessageRouter:
             logger.warning("ability_result missing request_id, ignoring")
             return False
 
-        future = self._pending_requests.pop(request_id, None)
-        self._request_sessions.pop(request_id, None)
+        pending = self._pending_requests.get(request_id)
 
-        if future is None:
+        if pending is None:
             logger.debug(
                 f"ability_result with request_id={request_id} "
                 f"has no pending execute_ability request, ignoring"
             )
             return False
+
+        if pending.command_type != CommandType.EXECUTE_ABILITY.value:
+            logger.warning(
+                "ability_result with request_id=%s matched non-execute command %s; ignoring",
+                request_id,
+                pending.command_type,
+            )
+            return False
+
+        self._pending_requests.pop(request_id, None)
+        future = pending.future
 
         if not future.done():
             result_msg = create_command_result(
@@ -284,6 +317,91 @@ class MessageRouter:
             logger.warning(f"Pending execute_ability request {request_id} already resolved")
 
         return True
+
+    async def _publish_confirmed_ability_result(
+        self,
+        *,
+        request_id: str,
+        pending: PendingRequest,
+        command_result: Message,
+    ) -> None:
+        try:
+            event = self._command_result_to_ability_result(
+                request_id=request_id,
+                pending=pending,
+                command_result=command_result,
+            )
+            await self._event_bus.publish(event)
+        except Exception:
+            logger.exception(
+                "Failed to publish confirmed ability_result for request_id=%s",
+                request_id,
+            )
+
+    def _command_result_to_ability_result(
+        self,
+        *,
+        request_id: str,
+        pending: PendingRequest,
+        command_result: Message,
+    ) -> Message:
+        request_payload = _payload_to_dict(pending.payload)
+        result_payload = _payload_to_dict(command_result.payload)
+
+        ability_payload = result_payload
+        data = result_payload.get("data")
+        if isinstance(data, dict) and (
+            "result" in data
+            or "ability_name" in data
+            or "agent_name" in data
+            or "request_id" in data
+        ):
+            ability_payload = data
+
+        agent_name = str(
+            ability_payload.get("agent_name")
+            or request_payload.get("agent_name")
+            or ""
+        )
+        ability_name = str(
+            ability_payload.get("ability_name")
+            or request_payload.get("ability_name")
+            or ""
+        )
+        success = bool(ability_payload.get("success", result_payload.get("success", False)))
+        result = ability_payload.get("result")
+        if result is None and ability_payload is result_payload:
+            result = result_payload.get("data")
+        error = ability_payload.get("error", result_payload.get("error"))
+
+        return Message(
+            type=EventType.ABILITY_RESULT.value,
+            payload=AbilityResultPayload(
+                request_id=str(ability_payload.get("request_id") or request_id),
+                agent_name=agent_name,
+                ability_name=ability_name,
+                success=success,
+                result=result,
+                error=error,
+            ),
+            request_id=request_id,
+        )
+
+    def _register_pending_request(
+        self,
+        request_id: str,
+        session_id: str,
+        message: Message,
+    ) -> PendingRequest:
+        future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
+        pending = PendingRequest(
+            future=future,
+            session_id=session_id,
+            command_type=message.type,
+            payload=_payload_to_dict(message.payload),
+        )
+        self._pending_requests[request_id] = pending
+        return pending
 
     async def _forward_to_subject(
         self,
@@ -310,9 +428,12 @@ class MessageRouter:
                 error=f"No Subject connected to handle {command_label}",
             )
 
+        pending = self._register_pending_request(request_id, session_id, message)
+
         message_dict = message.model_dump_with_timestamp()
         target_session = subject_sessions[0]
         if not await self._connection_manager.send_to(target_session, message_dict):
+            self._pending_requests.pop(request_id, None)
             return create_command_result(
                 request_id=request_id,
                 success=False,
@@ -324,12 +445,8 @@ class MessageRouter:
             f"session {target_session} (request_id={request_id})"
         )
 
-        future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
-        self._pending_requests[request_id] = future
-        self._request_sessions[request_id] = session_id
-
         try:
-            result = await asyncio.wait_for(future, timeout=timeout)
+            result = await asyncio.wait_for(pending.future, timeout=timeout)
             return result
         except TimeoutError:
             logger.warning(
@@ -350,7 +467,6 @@ class MessageRouter:
             )
         finally:
             self._pending_requests.pop(request_id, None)
-            self._request_sessions.pop(request_id, None)
 
     async def _handle_execute_ability(
         self, message: Message, session_id: str, request_id: str
@@ -376,9 +492,12 @@ class MessageRouter:
                 error="No Subject connected to execute ability",
             )
 
+        pending = self._register_pending_request(request_id, session_id, message)
+
         message_dict = message.model_dump_with_timestamp()
         target_session = subject_sessions[0]
         if not await self._connection_manager.send_to(target_session, message_dict):
+            self._pending_requests.pop(request_id, None)
             return create_command_result(
                 request_id=request_id,
                 success=False,
@@ -390,12 +509,8 @@ class MessageRouter:
             f"(request_id={request_id})"
         )
 
-        future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
-        self._pending_requests[request_id] = future
-        self._request_sessions[request_id] = session_id
-
         try:
-            result = await asyncio.wait_for(future, timeout=self._ability_timeout)
+            result = await asyncio.wait_for(pending.future, timeout=self._ability_timeout)
             return result
         except TimeoutError:
             logger.warning(
@@ -416,7 +531,6 @@ class MessageRouter:
             )
         finally:
             self._pending_requests.pop(request_id, None)
-            self._request_sessions.pop(request_id, None)
 
     async def _handle_spawn_agent(
         self, message: Message, session_id: str, request_id: str
@@ -936,8 +1050,9 @@ class MessageRouter:
         )
 
     def cancel_pending_requests(self) -> None:
-        for request_id, future in self._pending_requests.items():
-            if not future.done():
-                future.set_exception(RuntimeError("Core server shutting down, request cancelled"))
+        for request_id, pending in self._pending_requests.items():
+            if not pending.future.done():
+                pending.future.set_exception(
+                    RuntimeError("Core server shutting down, request cancelled")
+                )
         self._pending_requests.clear()
-        self._request_sessions.clear()

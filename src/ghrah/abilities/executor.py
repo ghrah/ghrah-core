@@ -16,7 +16,8 @@
 分布式模式下，HITL 在 Subject 端处理：
     Core 发送 tool_call → Subject
     Subject 执行 Ability + HITL 裁决
-    Subject 返回 ActionResult → Core Server resolve AbilityResultFuture
+    Subject 返回 command_result → Core Server resolve pending request
+    Core 发布确认后的 ability_result 事件 → Subject → Observer
 """
 
 from __future__ import annotations
@@ -582,7 +583,8 @@ class RemoteAbilityExecutor(AbilityExecutor):
     在新架构中：
     1. Core 通过 CommandSender 发送 execute_ability 请求到 Subject
     2. Subject 执行 Ability（含 HITL 裁决）
-    3. Subject 返回 ActionResult 到 Core，resolve 对应的 Future
+    3. Subject 通过 command_result 返回 ActionResult 到 Core，resolve 对应 Future
+    4. Core 发布确认后的 ability_result 领域事件
     """
 
     # 默认超时时间（秒），等待 Subject 返回 Ability 执行结果

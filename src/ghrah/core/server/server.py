@@ -162,7 +162,12 @@ class WebSocketServer:
                 )
                 if resolved:
                     await self._event_bus.publish(message)
-                    continue
+                else:
+                    logger.debug(
+                        f"Unmatched legacy ability_result from "
+                        f"session {session_id}: request_id={message.request_id}"
+                    )
+                continue
 
             known_event_types = {e.value for e in EventType}
             if (

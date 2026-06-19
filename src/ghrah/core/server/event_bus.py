@@ -50,6 +50,7 @@ class EventStore:
 
 class EventBus:
     EVENT_CLIENT_TYPE_MAP: dict[str, list[ClientType]] = {
+        # Observer does not connect to Core directly; Subject relays these events.
         EventType.ABILITY_RESULT.value: [ClientType.SUBJECT],
         EventType.AGENT_SPAWNED.value: [ClientType.SUBJECT],
         EventType.AGENT_TERMINATED.value: [ClientType.SUBJECT],
