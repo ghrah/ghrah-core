@@ -104,7 +104,7 @@ coder_response = await supervisor.send("coder", "根据以下设计编写代码�
 # 广播到所有已注册 Agent
 responses = await supervisor.broadcast("大家好，项目开始！")
 for resp in responses:
-    print(f"{resp.sender}: {resp.content}")
+    print(f"{resp['responder']}: {resp['content']}")
 ```
 
 ### 健康检查

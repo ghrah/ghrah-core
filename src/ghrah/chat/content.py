@@ -116,6 +116,22 @@ def block_from_dict(data: dict[str, Any]) -> ContentBlock | ToolCallChunkBlock:
     return cls(**kwargs)  # type: ignore[no-any-return]
 
 
+def blocks_from_dicts(content_blocks: list[dict[str, Any]]) -> list[ContentBlock]:
+    """将序列化的内容块字典列表解析为 ContentBlock 列表。
+
+    单项解析失败时回退为 TextBlock（取 text 或 reasoning 字段），
+    保证调用方总能拿到结构化块而非抛异常。供 AgentMessage.to_chat_message()
+    与 AgentActor.receive() 共用，避免两处解析逻辑漂移。
+    """
+    blocks: list[ContentBlock] = []
+    for bd in content_blocks:
+        try:
+            blocks.append(block_from_dict(bd))  # type: ignore[arg-type]
+        except (ValueError, KeyError):
+            blocks.append(TextBlock(text=str(bd.get("text", bd.get("reasoning", "")))))
+    return blocks
+
+
 def block_to_dict(block: ContentBlock | ToolCallChunkBlock) -> dict[str, Any]:
     result: dict[str, Any] = {"type": block.type}
     for f in block.__dataclass_fields__.values():

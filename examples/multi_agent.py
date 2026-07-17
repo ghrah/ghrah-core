@@ -96,7 +96,9 @@ async def main() -> None:
     print("广播消息到所有 Agent...")
     responses = await supervisor.broadcast("请简要介绍你的专长和职责, 保持在100字以内")
     for i, resp in enumerate(responses):
-        print(f"  Agent {i + 1} 回复: {resp}...")
+        responder = resp.get("responder", f"agent-{i + 1}")
+        content = resp["content"]
+        print(f"  {responder} 回复: {content}...")
 
     # Agent 间委托（planner 委托 coder 写代码）
     print("\n" + "=" * 60)

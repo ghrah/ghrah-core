@@ -19,6 +19,13 @@ from ghrah.chat.message import ChatMessage
 
 __all__ = ["ChatMessageFactory"]
 
+# role → 默认 source（与 ChatMessage.system()/user() 的默认值同属一张映射表）。
+# ai/tool 保持 None 哨兵（未指定），不在此映射内。
+_ROLE_DEFAULT_SOURCE: dict[str, str] = {
+    "system": "system:config",
+    "user": "human:user",
+}
+
 
 class ChatMessageFactory:
     """MessageFactory 的 ChatMessage 实现。
@@ -52,6 +59,8 @@ class ChatMessageFactory:
         if text is not None:
             from ghrah.chat.content import TextBlock
             blocks.append(TextBlock(text=text))
+        if source is None:
+            source = _ROLE_DEFAULT_SOURCE.get(role)  # ai/tool → None
         return ChatMessage(
             role=role,
             content_blocks=blocks,

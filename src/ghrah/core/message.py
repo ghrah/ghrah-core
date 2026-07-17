@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+__all__ = ["AgentMessage", "MessageType", "classify_source"]
+
 
 class MessageType(str, Enum):
     """消息类型枚举"""
@@ -22,6 +24,21 @@ class MessageType(str, Enum):
     RESULT = "result"  # 最终结果
     ERROR = "error"  # 错误消息
     BROADCAST = "broadcast"  # 广播消息
+
+
+def classify_source(sender: str) -> str:
+    """将 sender 归类为 {category}:{object} 格式的 source。
+
+    当前规则（仅 human/agent，system/tool 不经此函数）：
+    - sender == "user" → "human:user"
+    - 其他 → f"agent:{sender}"
+
+    扩展点：未来引入多人类/sensor/cron 时，在此增加分类规则，
+    或改为从 AgentMessage.sender_type 字段取值。
+    """
+    if sender == "user":
+        return "human:user"
+    return f"agent:{sender}"
 
 
 @dataclass
@@ -67,30 +84,26 @@ class AgentMessage:
         Returns:
             ChatMessage 实例
         """
-        from ghrah.chat.content import ContentBlock, TextBlock, block_from_dict
+        from ghrah.chat.content import TextBlock, blocks_from_dicts
         from ghrah.chat.message import ChatMessage
 
         if self.content_blocks:
-            blocks: list[ContentBlock] = []
-            for bd in self.content_blocks:
-                try:
-                    blocks.append(block_from_dict(bd))  # type: ignore[arg-type]
-                except (ValueError, KeyError):
-                    blocks.append(TextBlock(text=str(bd.get("text", bd.get("reasoning", "")))))
+            blocks = blocks_from_dicts(self.content_blocks)
         else:
             blocks = [TextBlock(text=self.content)]
 
-        role_map: dict[MessageType, tuple[str, str | None]] = {
-            MessageType.CHAT: ("user", self.sender),
-            MessageType.COMMAND: ("user", self.sender),
-            MessageType.TOOL_CALL: ("ai", self.sender),
-            MessageType.TOOL_RESULT: ("tool", self.sender),
-            MessageType.RESULT: ("ai", self.sender),
-            MessageType.ERROR: ("system", self.sender),
-            MessageType.BROADCAST: ("user", self.sender),
+        role_map: dict[MessageType, str] = {
+            MessageType.CHAT: "user",
+            MessageType.COMMAND: "user",
+            MessageType.TOOL_CALL: "ai",
+            MessageType.TOOL_RESULT: "tool",
+            MessageType.RESULT: "ai",
+            MessageType.ERROR: "system",
+            MessageType.BROADCAST: "user",
         }
 
-        role, source = role_map.get(self.type, ("user", self.sender))
+        role = role_map.get(self.type, "user")
+        source = classify_source(self.sender)
         return ChatMessage(
             role=role,
             content_blocks=blocks,

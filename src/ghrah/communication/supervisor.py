@@ -256,7 +256,7 @@ class SupervisorActor:
         content: str,
         sender: str = "user",
         msg_type: MessageType = MessageType.BROADCAST,
-    ) -> list[str]:
+    ) -> list[dict[str, str]]:
         """广播消息到所有 Agent。
 
         Args:
@@ -265,7 +265,10 @@ class SupervisorActor:
             msg_type: 消息类型
 
         Returns:
-            所有 Agent 回复内容列表
+            所有 Agent 回复列表，每项形如
+            ``{"responder": <agent_name>, "content": <回复内容>}``。
+            ``responder`` 即广播实际到达者（router.broadcast 返回的
+            AgentMessage 经 create_reply 令 sender=原 recipient）。
         """
         message = AgentMessage(
             sender=sender,
@@ -274,7 +277,7 @@ class SupervisorActor:
             type=msg_type,
         )
         responses = await self._router.broadcast(message)
-        return [r.content for r in responses]
+        return [{"responder": r.sender, "content": r.content} for r in responses]
 
     async def delegate(self, from_agent: str, to_agent: str, content: str, timeout: float | None = None) -> str:
         """Agent 间委托：从一个 Agent 委托任务到另一个 Agent。

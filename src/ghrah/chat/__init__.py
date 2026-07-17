@@ -37,6 +37,7 @@ from ghrah.chat.content import (
     ToolResultBlock,
     block_from_dict,
     block_to_dict,
+    blocks_from_dicts,
 )
 from ghrah.chat.factory import ChatMessageFactory
 from ghrah.chat.format import ChatFormat, LLMResponse, TokenUsage

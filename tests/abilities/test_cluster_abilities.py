@@ -39,13 +39,16 @@ def _make_context(
 def _make_supervisor(
     list_agents_return: list[dict[str, Any]] | None = None,
     send_return: str = "response from target",
-    broadcast_return: list[str] | None = None,
+    broadcast_return: list[dict[str, str]] | None = None,
     spawn_agent_return: str = "new-agent",
 ) -> MagicMock:
     supervisor = MagicMock()
     supervisor.list_agents = AsyncMock(return_value=list_agents_return or [])
     supervisor.send = AsyncMock(return_value=send_return)
-    supervisor.broadcast = AsyncMock(return_value=broadcast_return or ["ok"])
+    supervisor.broadcast = AsyncMock(
+        return_value=broadcast_return
+        or [{"responder": "mock-agent", "content": "ok"}]
+    )
     supervisor.spawn_agent = AsyncMock(return_value=spawn_agent_return)
     return supervisor
 
@@ -217,7 +220,10 @@ class TestBroadcastMessageAbility:
         assert "No supervisor" in result.data["error"]
 
     async def test_execute_success(self) -> None:
-        responses = ["ack from b", "ack from c"]
+        responses = [
+            {"responder": "b", "content": "ack from b"},
+            {"responder": "c", "content": "ack from c"},
+        ]
         supervisor = _make_supervisor(broadcast_return=responses)
         ctx = _make_context(
             supervisor=supervisor,
@@ -228,6 +234,7 @@ class TestBroadcastMessageAbility:
         result = await ability.execute(ctx)
         assert result.outcome == ActionOutcome.SUCCESS
         assert result.data["responses"] == responses
+        assert result.data["recipients"] == ["b", "c"]
         assert result.data["agent_count"] == 2
         supervisor.broadcast.assert_awaited_once_with(
             content="hello all", sender="agent-a"

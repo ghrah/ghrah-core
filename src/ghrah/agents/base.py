@@ -48,7 +48,7 @@ from ghrah.abilities.hook_context import HookContext
 from ghrah.abilities.hook_runner import HookRunner
 from ghrah.abilities.hook_store import HookListView, HookStore
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
-from ghrah.chat.content import block_to_dict
+from ghrah.chat.content import ContentBlock, block_to_dict, blocks_from_dicts
 from ghrah.chat.message import ChatMessage
 from ghrah.context.iteration_state import IterationState
 from ghrah.context.manager import ContextManager
@@ -72,7 +72,7 @@ from ghrah.core.exceptions import (
     AgentInitializationError,
 )
 from ghrah.core.llm_protocol import LLMProtocol, LLMResponseProtocol
-from ghrah.core.message import AgentMessage, MessageType
+from ghrah.core.message import AgentMessage, MessageType, classify_source
 from ghrah.types.config_types import AgentConfig
 from ghrah.types.results import ActionOutcome, ActionResult
 
@@ -433,8 +433,17 @@ class ActorAgent:
             await self._ensure_llm()
 
             # 将用户消息入队，供 _drive_loop 在迭代中消费
+            if message.content_blocks:
+                text_or_blocks: str | list[ContentBlock] = blocks_from_dicts(
+                    message.content_blocks
+                )
+            else:
+                text_or_blocks = message.content
             await self._message_queue.put(
-                ChatMessage.user(text_or_blocks=message.content, source="human")
+                ChatMessage.user(
+                    text_or_blocks=text_or_blocks,
+                    source=classify_source(message.sender),
+                )
             )
 
             # 将 max_iterations 从 config 设置到 IterationState

@@ -87,7 +87,11 @@ class BroadcastMessageAbility(Ability):
             )
             return ActionResult(
                 outcome=ActionOutcome.SUCCESS,
-                data={"responses": responses, "agent_count": len(responses)},
+                data={
+                    "responses": responses,
+                    "recipients": [r["responder"] for r in responses],
+                    "agent_count": len(responses),
+                },
             )
         except Exception as e:
             return ActionResult(

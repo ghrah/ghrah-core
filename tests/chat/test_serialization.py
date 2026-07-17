@@ -45,7 +45,7 @@ class TestDeserializeMessagesNewFormat:
             {
                 "role": "user",
                 "content_blocks": [{"type": "text", "text": "hello"}],
-                "source": "human",
+                "source": "human:user",
             },
             {
                 "role": "ai",

@@ -21,13 +21,13 @@ class TestChatMessageConstructors:
         msg = ChatMessage.system(text="You are helpful")
         assert msg.role == "system"
         assert msg.text == "You are helpful"
-        assert msg.source == "system"
+        assert msg.source == "system:config"
 
     def test_user_with_string(self) -> None:
         msg = ChatMessage.user(text_or_blocks="hello")
         assert msg.role == "user"
         assert msg.text == "hello"
-        assert msg.source == "human"
+        assert msg.source == "human:user"
 
     def test_user_with_blocks(self) -> None:
         blocks = [TextBlock(text="hello"), ImageBlock(url="https://img.png")]
@@ -149,7 +149,7 @@ class TestChatMessageToDict:
         d = msg.to_dict()
         assert d["role"] == "user"
         assert d["content_blocks"] == [{"type": "text", "text": "hello"}]
-        assert d["source"] == "human"
+        assert d["source"] == "human:user"
 
     def test_message_with_tool_calls(self) -> None:
         tc = ToolCallBlock(id="c1", name="read", arguments={"path": "/tmp"})
@@ -170,7 +170,7 @@ class TestChatMessageFromDict:
         d = {
             "role": "user",
             "content_blocks": [{"type": "text", "text": "hello"}],
-            "source": "human",
+            "source": "human:user",
         }
         msg = ChatMessage.from_dict(d)
         assert msg.role == "user"
