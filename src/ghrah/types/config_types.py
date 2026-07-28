@@ -64,8 +64,11 @@ class ContextConfig:
         persistence_root_dir: 持久化存储根目录路径（json_file/sqlite 后端使用）
         persistence_compress: 是否启用 gzip 压缩持久化文件（json_file 后端），默认 True
         persistence_run_id: 持久化运行 ID，None 表示自动生成（格式：run_{ISO8601}）
-        command_sender: CommandSender 实例（供远程持久化后端使用）
-        persistence_agent_name: 远程持久化标识的 Agent 名称
+
+    Note:
+        remote 持久化后端所需的 CommandSender 与 agent_name 通过
+        ``create_persistence`` 的显式参数传入，不再挂在 ContextConfig 上
+        （避免 dataclass 携带运行时服务引用导致序列化递归）。
     """
 
     snapshot_interval: int = 5
@@ -74,8 +77,6 @@ class ContextConfig:
     persistence_root_dir: str | None = None
     persistence_compress: bool = True
     persistence_run_id: str | None = None
-    command_sender: Any = field(default=None, repr=False)
-    persistence_agent_name: str | None = field(default=None, repr=False)
 
 
 @dataclass

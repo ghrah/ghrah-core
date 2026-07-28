@@ -10,6 +10,7 @@ AgentRegistry 是普通 Python 类，由 SupervisorActor 内部持有，
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from dataclasses import dataclass, field
@@ -41,9 +42,34 @@ class AgentInfo:
         """转换为可序列化的字典。"""
         return {
             "name": self.name,
+            "config": _agent_config_to_dict(self.config) if self.config else None,
             "description": self.config.description,
             "created_at": self.created_at,
         }
+
+
+def _agent_config_to_dict(config: AgentConfig) -> dict[str, Any]:
+    """将 AgentConfig 序列化为 wire 契约 dict（对齐 AgentConfigPayload）。
+
+    显式字段构造保持 wire 契约子集稳定。ContextConfig 已回归纯数据
+    （command_sender/persistence_agent_name 字段已移除），可直接用
+    dataclasses.asdict 序列化。
+    """
+    return {
+        "name": config.name,
+        "agent_config_name": config.agent_config_name,
+        "description": config.description,
+        "system_prompt": config.system_prompt,
+        "max_iterations": config.max_iterations,
+        "communication_timeout": config.communication_timeout,
+        "window": dataclasses.asdict(config.window) if config.window else None,
+        "context": dataclasses.asdict(config.context) if config.context else None,
+        "model_overrides": (
+            dataclasses.asdict(config.model_overrides)
+            if config.model_overrides
+            else None
+        ),
+    }
 
 
 class AgentRegistry:

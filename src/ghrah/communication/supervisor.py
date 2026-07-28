@@ -104,10 +104,6 @@ class SupervisorActor:
         if self._registry.exists(config.name):
             raise RegistryError(f"Agent already registered: {config.name}")
 
-        if self._command_sender is not None and config.context is not None:
-            config.context.command_sender = self._command_sender
-            config.context.persistence_agent_name = config.name
-
         supervisor_handle = self
 
         # 构建默认 Ability 列表
@@ -135,6 +131,7 @@ class SupervisorActor:
             config=config,
             abilities=abilities,
             supervisor=supervisor_handle,
+            command_sender=self._command_sender,
         )
 
         self._registry.register(

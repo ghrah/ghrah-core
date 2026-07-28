@@ -68,10 +68,10 @@ class RemoteBackend(PersistenceBackend):
         from ghrah.types.config_types import ContextConfig
         config = ContextConfig(
             persistence_type="remote",
-            command_sender=command_sender,
-            persistence_agent_name="my-agent",
         )
-        backend = create_persistence(config)
+        backend = create_persistence(
+            config, command_sender=command_sender, agent_name="my-agent"
+        )
     """
 
     def __init__(

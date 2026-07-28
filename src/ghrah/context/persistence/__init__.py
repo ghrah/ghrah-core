@@ -24,7 +24,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ghrah.context.persistence.backend import PersistenceBackend
 from ghrah.context.persistence.json_file import JsonFileBackend
@@ -50,7 +50,12 @@ if TYPE_CHECKING:
 PERSISTENCE_BACKEND_TYPES = ("json_file", "memory", "sqlite", "remote")
 
 
-def create_persistence(config: ContextConfig) -> PersistenceBackend | None:
+def create_persistence(
+    config: ContextConfig,
+    *,
+    command_sender: Any | None = None,
+    agent_name: str = "",
+) -> PersistenceBackend | None:
     """根据 ContextConfig 创建持久化后端实例。
 
     工厂函数：根据 persistence_type 选择对应的 PersistenceBackend 实现。
@@ -58,6 +63,10 @@ def create_persistence(config: ContextConfig) -> PersistenceBackend | None:
 
     Args:
         config: ContextConfig 实例，包含持久化配置
+        command_sender: CommandSender 实例，仅 ``remote`` 后端需要；
+            其它后端忽略。由调用方（Supervisor/AgentBuilder）显式注入，
+            不再从 ``config.command_sender`` 读取。
+        agent_name: 远程持久化命名空间标识，仅 ``remote`` 后端使用。
 
     Returns:
         PersistenceBackend 实例，如果 persistence_type 为 None 则返回 None
@@ -99,15 +108,15 @@ def create_persistence(config: ContextConfig) -> PersistenceBackend | None:
     if config.persistence_type == "remote":
         from ghrah.context.persistence.remote_backend import RemoteBackend as _RemoteBackend
 
-        if config.command_sender is not None:
+        if command_sender is not None:
             return _RemoteBackend(
-                command_sender=config.command_sender,
-                agent_name=config.persistence_agent_name or "",
+                command_sender=command_sender,
+                agent_name=agent_name,
             )
 
         raise ValueError(
             "command_sender is required for remote persistence backend. "
-            "Set ContextConfig.command_sender before calling create_persistence()."
+            "Pass it via the command_sender keyword argument to create_persistence()."
         )
 
     raise ValueError(

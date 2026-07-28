@@ -76,8 +76,18 @@ def _build_window_manager(config: WindowConfig) -> WindowManager:
     )
 
 
-def _build_context_manager(config: AgentConfig) -> ContextManager:
-    """从 AgentConfig 构建 ContextManager（含 WindowManager + Persistence）。"""
+def _build_context_manager(
+    config: AgentConfig,
+    *,
+    command_sender: Any | None = None,
+) -> ContextManager:
+    """从 AgentConfig 构建 ContextManager（含 WindowManager + Persistence）。
+
+    ``command_sender`` 由调用方（Supervisor/AgentBuilder）显式传入，
+    仅当 ``persistence_type == "remote"`` 时被 ``create_persistence`` 消费。
+    该引用在 ``_cm_factory`` 闭包中被捕获，确保 agent reset 重建 CM 时
+    RemoteBackend 仍能访问命令通道。
+    """
     from ghrah.chat.factory import ChatMessageFactory
 
     window_manager = None
@@ -87,7 +97,11 @@ def _build_context_manager(config: AgentConfig) -> ContextManager:
     context_config = config.context
     persistence = None
     if context_config is not None:
-        persistence = create_persistence(context_config)
+        persistence = create_persistence(
+            context_config,
+            command_sender=command_sender,
+            agent_name=config.name,
+        )
 
     message_factory = ChatMessageFactory()
 
@@ -126,6 +140,7 @@ class AgentBuilder:
         ability_executor: AbilityExecutor | None = None,
         event_publisher: EventPublisher | None = None,
         llm_factory: Callable[[AgentConfig], LLMProtocol] | None = None,
+        command_sender: Any | None = None,
     ) -> Any:
         """从 AgentConfig 构建 ActorAgent（默认注入策略）。
 
@@ -136,16 +151,18 @@ class AgentBuilder:
             ability_executor: 可选的 AbilityExecutor，默认创建 LocalAbilityExecutor
             event_publisher: 可选的 EventPublisher，默认 NullEventPublisher
             llm_factory: 可选的 LLM 工厂回调，默认从 agentconf 创建
+            command_sender: 可选的 CommandSender，用于 remote 持久化后端。
+                由 Supervisor 在服务器模式注入；None 表示不启用远程持久化。
 
         Returns:
             配置好的 ActorAgent 实例
         """
         from ghrah.agents.base import ActorAgent
 
-        context_manager = _build_context_manager(config)
+        context_manager = _build_context_manager(config, command_sender=command_sender)
 
         def _cm_factory() -> ContextManager:
-            return _build_context_manager(config)
+            return _build_context_manager(config, command_sender=command_sender)
 
         if ability_executor is None:
             ability_executor = LocalAbilityExecutor(

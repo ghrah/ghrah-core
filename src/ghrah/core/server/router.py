@@ -828,7 +828,7 @@ class MessageRouter:
         return create_command_result(
             request_id=request_id,
             success=True,
-            data=result,
+            data={"agents": result},
         )
 
     async def _handle_health_check(
