@@ -30,11 +30,14 @@ def mock_supervisor():
 
 @pytest.fixture
 def router(mock_supervisor):
-    return MessageRouter(
-        supervisor=mock_supervisor,
+    router = MessageRouter(
         connection_manager=ConnectionManager(),
         event_bus=EventBus(ConnectionManager()),
     )
+    # 多集群：注册 mock 集群并绑定测试 session（D-strict 前置）
+    router._clusters["default"] = mock_supervisor
+    router.bind_session("session-1", "default")
+    return router
 
 
 def _make_message(command: CommandType) -> Message:

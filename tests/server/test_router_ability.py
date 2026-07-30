@@ -52,7 +52,6 @@ def event_bus(connection_manager):
 @pytest.fixture
 def router(mock_supervisor, connection_manager, event_bus):
     return MessageRouter(
-        supervisor=mock_supervisor,
         connection_manager=connection_manager,
         event_bus=event_bus,
     )

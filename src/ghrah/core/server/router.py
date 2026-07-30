@@ -27,6 +27,7 @@ from ghrah.protocol.types import (
     SESSION_COMMANDS,
     AbilityResultPayload,
     BroadcastMessagePayload,
+    ClusterStatusPayload,
     CommandType,
     DelegatePayload,
     EventType,
@@ -42,6 +43,7 @@ from ghrah.protocol.types import (
     SessionDeletePayload,
     SessionListPayload,
     SessionSwitchPayload,
+    ShutdownClusterPayload,
     SpawnAgentPayload,
     SubscribePayload,
     TerminateAgentPayload,
@@ -76,19 +78,57 @@ def _payload_to_dict(payload: Any) -> dict[str, Any]:
 class MessageRouter:
     def __init__(
         self,
-        supervisor: SupervisorActor,
         connection_manager: ConnectionManager,
         event_bus: EventBus,
         ability_timeout: float = 120.0,
         default_timeout: float = 30.0,
     ) -> None:
-        self._supervisor = supervisor
+        self._clusters: dict[str, SupervisorActor] = {}
+        self._session_cluster: dict[str, str] = {}
+        self._cluster_session: dict[str, str] = {}
         self._connection_manager = connection_manager
         self._event_bus = event_bus
         self._ability_timeout = ability_timeout
         self._default_timeout = default_timeout
 
         self._pending_requests: dict[str, PendingRequest] = {}
+
+    # ----------------------------------------------------------------
+    # 集群绑定（session → cluster）
+    # ----------------------------------------------------------------
+
+    def bind_session(self, session_id: str, cluster_id: str) -> None:
+        """绑定 session 到 cluster（一条 session 至多绑定一个 cluster）。"""
+        self.unbind_session(session_id)
+        self._session_cluster[session_id] = cluster_id
+        self._cluster_session[cluster_id] = session_id
+
+    def unbind_session(self, session_id: str) -> None:
+        """解除 session 的 cluster 绑定（只清绑定，不清集群与 agents）。"""
+        cluster_id = self._session_cluster.pop(session_id, None)
+        if cluster_id is not None and self._cluster_session.get(cluster_id) == session_id:
+            del self._cluster_session[cluster_id]
+
+    def get_cluster_for_session(self, session_id: str) -> SupervisorActor | None:
+        """取 session 绑定集群的 SupervisorActor，未绑定返回 None。"""
+        cluster_id = self._session_cluster.get(session_id)
+        if cluster_id is None:
+            return None
+        return self._clusters.get(cluster_id)
+
+    def _require_cluster(self, session_id: str) -> SupervisorActor | None:
+        """D-strict：取 session 绑定集群，未绑定返回 None（调用方统一报错）。"""
+        return self.get_cluster_for_session(session_id)
+
+    def _cluster_not_initialized_error(self, session_id: str, request_id: str) -> Message:
+        return create_error(
+            code="CLUSTER_NOT_INITIALIZED",
+            message=(
+                f"Session {session_id} is not bound to any cluster; "
+                "send init_cluster first"
+            ),
+            request_id=request_id,
+        )
 
     async def send_command(
         self,
@@ -199,6 +239,7 @@ class MessageRouter:
             CommandType.INIT_CLUSTER: self._handle_init_cluster,
             CommandType.SHUTDOWN_CLUSTER: self._handle_shutdown_cluster,
             CommandType.CLUSTER_STATUS: self._handle_cluster_status,
+            CommandType.LIST_CLUSTERS: self._handle_list_clusters,
             CommandType.SUBSCRIBE: self._handle_subscribe,
             CommandType.UNSUBSCRIBE: self._handle_unsubscribe,
             CommandType.HITL_RESPONSE: self._handle_hitl_response,
@@ -536,6 +577,9 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, SpawnAgentPayload)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
         logger.info(
             "_handle_spawn_agent: name=%s agent_config=%s request_id=%s",
             payload.config.name,
@@ -586,7 +630,7 @@ class MessageRouter:
                     )
 
         try:
-            result = await self._supervisor.spawn_agent(core_config, abilities=ability_instances)
+            result = await cluster.spawn_agent(core_config, abilities=ability_instances)
         except RegistryError as e:
             return create_command_result(
                 request_id=request_id,
@@ -665,7 +709,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, TerminateAgentPayload)
-        await self._supervisor.terminate_agent(payload.name)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        await cluster.terminate_agent(payload.name)
 
         await self._event_bus.emit_agent_terminated(agent_name=payload.name)
 
@@ -679,7 +726,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, SendMessagePayload)
-        result = await self._supervisor.send(
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        result = await cluster.send(
             target=payload.target,
             content=payload.content,
             sender=payload.sender,
@@ -695,7 +745,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, BroadcastMessagePayload)
-        results = await self._supervisor.broadcast(
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        results = await cluster.broadcast(
             content=payload.content,
             sender=payload.sender,
         )
@@ -709,7 +762,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, RegisterAbilityPayload)
-        result = await self._supervisor.register_ability_for_agent(
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        result = await cluster.register_ability_for_agent(
             agent_name=payload.agent_name,
             ability_type=payload.ability.ability_type,
             ability_params=payload.ability.params,
@@ -724,8 +780,11 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, UnregisterAbilityPayload)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
         try:
-            agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+            agent_handle = await cluster.get_agent_handle(payload.agent_name)
             if agent_handle is None:
                 return create_command_result(
                     request_id=request_id,
@@ -753,7 +812,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, GetAgentInfoPayload)
-        agent_handle = await self._supervisor.get_agent_handle(
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        agent_handle = await cluster.get_agent_handle(
             name=payload.name,
         )
         if agent_handle is None:
@@ -778,13 +840,40 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, InitClusterPayload)
-        agents = await self._supervisor.list_agents()
+        cluster_id = payload.cluster_id
+
+        supervisor = self._clusters.get(cluster_id)
+        if supervisor is not None:
+            bound_session = self._cluster_session.get(cluster_id)
+            if bound_session is not None and bound_session != session_id:
+                if bound_session in self._connection_manager.active_sessions:
+                    return create_error(
+                        code="CLUSTER_ALREADY_BOUND",
+                        message=(
+                            f"Cluster '{cluster_id}' is already bound to an active "
+                            f"session ({bound_session})"
+                        ),
+                        request_id=request_id,
+                    )
+                # 陈旧绑定（旧 session 已断连）：解绑后允许重绑定
+                self.unbind_session(bound_session)
+        else:
+            supervisor = SupervisorActor(
+                cluster_id=cluster_id,
+                command_sender=self,
+                event_bus=self._event_bus,
+            )
+            self._clusters[cluster_id] = supervisor
+            logger.info(f"Created SupervisorActor for cluster '{cluster_id}'")
+
+        self.bind_session(session_id, cluster_id)
+        logger.info(f"Session {session_id} bound to cluster '{cluster_id}'")
         return create_command_result(
             request_id=request_id,
             success=True,
             data={
                 "initialized": True,
-                "active_agents": len(agents),
+                "cluster_id": cluster_id,
                 "config": payload.config,
             },
         )
@@ -792,39 +881,97 @@ class MessageRouter:
     async def _handle_shutdown_cluster(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        agents = await self._supervisor.list_agents()
+        payload = expect_payload(message, ShutdownClusterPayload)
+        cluster_id = payload.cluster_id
+
+        supervisor = self._clusters.get(cluster_id)
+        if supervisor is None:
+            return create_error(
+                code="CLUSTER_NOT_FOUND",
+                message=f"Cluster '{cluster_id}' does not exist",
+                request_id=request_id,
+            )
+
+        agents = await supervisor.list_agents()
         for agent_info in agents:
             name = agent_info.get("name", "")
             if name:
                 try:
-                    await self._supervisor.terminate_agent(name)
+                    await supervisor.terminate_agent(name)
                 except Exception:
                     logger.warning(f"Failed to terminate agent '{name}' during shutdown")
+
+        bound_session = self._cluster_session.get(cluster_id)
+        if bound_session is not None:
+            self.unbind_session(bound_session)
+        del self._clusters[cluster_id]
+        logger.info(
+            f"Cluster '{cluster_id}' shut down ({len(agents)} agents terminated)"
+        )
         return create_command_result(
             request_id=request_id,
             success=True,
-            data={"shutdown": True, "terminated_agents": len(agents)},
+            data={
+                "shutdown": True,
+                "cluster_id": cluster_id,
+                "terminated_agents": len(agents),
+            },
         )
 
     async def _handle_cluster_status(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        agents = await self._supervisor.list_agents()
-        health = await self._supervisor.health_check()
+        payload = expect_payload(message, ClusterStatusPayload)
+        cluster_id = payload.cluster_id
+
+        supervisor = self._clusters.get(cluster_id)
+        if supervisor is None:
+            return create_error(
+                code="CLUSTER_NOT_FOUND",
+                message=f"Cluster '{cluster_id}' does not exist",
+                request_id=request_id,
+            )
+
+        agents = await supervisor.list_agents()
+        health = await supervisor.health_check()
         return create_command_result(
             request_id=request_id,
             success=True,
             data={
+                "cluster_id": cluster_id,
                 "active_agents": len(agents),
                 "health": health,
                 "status": "running",
             },
         )
 
+    async def _handle_list_clusters(
+        self, message: Message, session_id: str, request_id: str
+    ) -> Message:
+        clusters: list[dict[str, Any]] = []
+        for cluster_id, supervisor in self._clusters.items():
+            agents = await supervisor.list_agents()
+            clusters.append(
+                {
+                    "cluster_id": cluster_id,
+                    "active_agents": len(agents),
+                    "status": "running",
+                    "bound": cluster_id in self._cluster_session,
+                }
+            )
+        return create_command_result(
+            request_id=request_id,
+            success=True,
+            data={"clusters": clusters},
+        )
+
     async def _handle_list_agents(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        result = await self._supervisor.list_agents()
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        result = await cluster.list_agents()
         return create_command_result(
             request_id=request_id,
             success=True,
@@ -834,7 +981,10 @@ class MessageRouter:
     async def _handle_health_check(
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
-        result = await self._supervisor.health_check()
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        result = await cluster.health_check()
         return create_command_result(
             request_id=request_id,
             success=True,
@@ -843,7 +993,10 @@ class MessageRouter:
 
     async def _handle_delegate(self, message: Message, session_id: str, request_id: str) -> Message:
         payload = expect_payload(message, DelegatePayload)
-        result = await self._supervisor.delegate(
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        result = await cluster.delegate(
             from_agent=payload.from_agent,
             to_agent=payload.to_agent,
             content=payload.content,
@@ -893,7 +1046,10 @@ class MessageRouter:
         """将 HITL 审批结果路由到对应的 Agent（单体路径）。"""
         payload = expect_payload(message, HITLResponsePayload)
 
-        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        agent_handle = await cluster.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,
@@ -922,7 +1078,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, SessionCreatePayload)
-        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        agent_handle = await cluster.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,
@@ -959,7 +1118,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, SessionSwitchPayload)
-        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        agent_handle = await cluster.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,
@@ -993,7 +1155,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, SessionListPayload)
-        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        agent_handle = await cluster.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,
@@ -1013,7 +1178,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, SessionArchivePayload)
-        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        agent_handle = await cluster.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,
@@ -1033,7 +1201,10 @@ class MessageRouter:
         self, message: Message, session_id: str, request_id: str
     ) -> Message:
         payload = expect_payload(message, SessionDeletePayload)
-        agent_handle = await self._supervisor.get_agent_handle(payload.agent_name)
+        cluster = self._require_cluster(session_id)
+        if cluster is None:
+            return self._cluster_not_initialized_error(session_id, request_id)
+        agent_handle = await cluster.get_agent_handle(payload.agent_name)
         if agent_handle is None:
             return create_command_result(
                 request_id=request_id,

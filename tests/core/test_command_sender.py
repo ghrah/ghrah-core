@@ -49,12 +49,15 @@ def event_bus(connection_manager):
 
 @pytest.fixture
 def router(mock_supervisor, connection_manager, event_bus):
-    return MessageRouter(
-        supervisor=mock_supervisor,
+    router = MessageRouter(
         connection_manager=connection_manager,
         event_bus=event_bus,
         ability_timeout=10.0,
     )
+    # 多集群：注册 mock 集群并绑定测试 session（D-strict 前置）
+    router._clusters["default"] = mock_supervisor
+    router.bind_session("session-1", "default")
+    return router
 
 
 # ─── 测试用例 ───
@@ -95,7 +98,6 @@ class TestMessageRouterSendCommand:
     ):
         """测试构造函数中设置自定义超时。"""
         router = MessageRouter(
-            supervisor=mock_supervisor,
             connection_manager=connection_manager,
             event_bus=event_bus,
             default_timeout=60.0,

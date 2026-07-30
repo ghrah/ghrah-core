@@ -100,6 +100,7 @@ class WebSocketServer:
             logger.error(f"WebSocket error for session {session_id}: {e}")
         finally:
             self._cancel_session_tasks(session_id)
+            self._router.unbind_session(session_id)
             self._connection_manager.disconnect(session_id)
             logger.info(f"Session cleaned up: {session_id}")
 

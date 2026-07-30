@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
 
-from ghrah.communication.supervisor import SupervisorActor
 from ghrah.core.server.config import CoreServerConfig
 from ghrah.core.server.connection_manager import ConnectionManager
 from ghrah.core.server.event_bus import EventBus
@@ -26,13 +25,12 @@ def create_app(config: CoreServerConfig | None = None) -> FastAPI:
     connection_manager = ConnectionManager()
     event_bus = EventBus(connection_manager)
 
-    supervisor: SupervisorActor | None = None
     router: MessageRouter | None = None
     ws_server: WebSocketServer | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal supervisor, router, ws_server
+        nonlocal router, ws_server
 
         logging.basicConfig(
             level=getattr(logging, config.log_level.upper(), logging.INFO),
@@ -40,19 +38,12 @@ def create_app(config: CoreServerConfig | None = None) -> FastAPI:
         )
         logger.info("Starting ghrah-core server...")
 
-        supervisor = SupervisorActor()
-        logger.info("SupervisorActor initialized")
-
+        # 多集群：router 持空 dict 启动，SupervisorActor 由 init_cluster 按需创建
         router = MessageRouter(
-            supervisor=supervisor,
             connection_manager=connection_manager,
             event_bus=event_bus,
             ability_timeout=config.ability_timeout,
         )
-
-        # 注入 CommandSender（Router）和 EventBus 到 Supervisor
-        supervisor._command_sender = router
-        supervisor._event_bus = event_bus
 
         ws_server = WebSocketServer(config, connection_manager, router, event_bus)
 

@@ -64,13 +64,16 @@ class SupervisorActor:
         command_sender: CommandSender | None = None,
         event_bus: EventBus | None = None,
         default_timeout: float = 300.0,
+        cluster_id: str | None = None,
     ) -> None:
         self._command_sender = command_sender
         self._event_bus = event_bus
+        self._cluster_id = cluster_id
         self._registry = AgentRegistry()
         self._router = MessageRouter(self._registry, default_timeout=default_timeout)
         logger.info(
             f"SupervisorActor initialized"
+            f"{' cluster_id=' + cluster_id if cluster_id else ''}"
             f"{' with command_sender' if command_sender else ''}"
             f"{' with event_bus' if event_bus else ''}"
             f" default_timeout={default_timeout}"
