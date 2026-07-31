@@ -9,7 +9,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from ghrah.abilities.paths import extract_paths, is_subpath
+from ghrah.abilities.paths import extract_paths, is_subpath, resolve_relative_path
 
 
 class TestIsSubpath:
@@ -89,3 +89,30 @@ class TestExtractPaths:
     def test_non_string_ignored(self) -> None:
         result = extract_paths("read_file", {"file_path": 123})
         assert result == []
+
+
+class TestResolveRelativePath:
+    """统一相对路径解析入口：`.` → workspace 根，绝不泄漏 $PWD。"""
+
+    def test_dot_resolves_to_workspace_root(self) -> None:
+        assert resolve_relative_path("/ws/agent1", ".") == "/ws/agent1"
+
+    def test_dot_does_not_produce_trailing_slash_dot(self) -> None:
+        # 确保不产生 /ws/agent1/. 残留
+        assert resolve_relative_path("/ws/agent1", ".") != "/ws/agent1/."
+
+    def test_relative_joins_workspace(self) -> None:
+        import os
+
+        assert resolve_relative_path("/ws/agent1", "src/main.py") == os.path.join(
+            "/ws/agent1", "src/main.py"
+        )
+
+    def test_absolute_path_passthrough(self) -> None:
+        assert resolve_relative_path("/ws/agent1", "/abs/path") == "/abs/path"
+
+    def test_relative_not_resolved_to_pwd(self) -> None:
+        import os
+
+        # "." 不解析到进程 $PWD
+        assert resolve_relative_path("/ws/agent1", ".") != os.getcwd()
