@@ -77,10 +77,14 @@ class TestMessageRouterSendCommand:
 
     @pytest.mark.asyncio
     async def test_send_command_no_subject_sessions(self, router):
-        """测试没有 Subject 会话时发送命令应返回错误。"""
+        """无 cluster 绑定时 send_command 应报 SUBJECT_SESSION_NOT_BOUND（决策 A）。
+
+        send_command 走 <internal> 路径，cluster_id=None → 不回退 subject_sessions[0]，
+        统一报 SUBJECT_SESSION_NOT_BOUND。
+        """
         result = await router.send_command("persist_save_node", {"agent_name": "test"})
-        assert result.get("success") is False
-        assert "No Subject connected" in result.get("error", "")
+        # create_error 产 ErrorPayload.model_dump()：code/message/details，无 success 字段
+        assert result.get("code") == "SUBJECT_SESSION_NOT_BOUND"
 
     @pytest.mark.asyncio
     async def test_send_command_forwards_persist_commands(self, router, mock_supervisor):

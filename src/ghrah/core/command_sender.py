@@ -34,6 +34,7 @@ class CommandSender(Protocol):
         payload: dict[str, Any],
         request_id: str | None = None,
         timeout: float | None = None,
+        cluster_id: str | None = None,
     ) -> dict[str, Any]:
         """发送命令到 Subject 并等待响应。
 
@@ -42,6 +43,10 @@ class CommandSender(Protocol):
             payload: 命令载荷
             request_id: 请求 ID（自动生成如果未提供）
             timeout: 超时时间（秒），None 使用默认值
+            cluster_id: 集群 ID — 用于按 cluster 反查绑定的 target subject session
+                （决策 A：cluster 感知转发）。None 表示无 cluster 绑定，将报
+                ``SUBJECT_SESSION_NOT_BOUND``。由 cluster-aware sender 包装层
+                （SupervisorActor 持 ``_cluster_id``）注入，普通调用方可省略。
 
         Returns:
             命令响应载荷字典

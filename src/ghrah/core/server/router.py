@@ -130,12 +130,36 @@ class MessageRouter:
             request_id=request_id,
         )
 
+    def _subject_session_not_bound_error(
+        self, cluster_id: str | None, request_id: str
+    ) -> Message:
+        """D-strict 对称：cluster 无绑定的 subject session 时统一报错。
+
+        不回退 ``subject_sessions[0]``。
+        """
+        if cluster_id is None:
+            message = (
+                "No cluster binding for this command; "
+                "cannot resolve target Subject session"
+            )
+        else:
+            message = (
+                f"Cluster '{cluster_id}' has no bound Subject session; "
+                "init_cluster on a Subject session first"
+            )
+        return create_error(
+            code="SUBJECT_SESSION_NOT_BOUND",
+            message=message,
+            request_id=request_id,
+        )
+
     async def send_command(
         self,
         command_type: str,
         payload: dict[str, Any],
         request_id: str | None = None,
         timeout: float | None = None,
+        cluster_id: str | None = None,
     ) -> dict[str, Any]:
         """实现 CommandSender 协议 — 供内部组件（RemoteBackend、RemoteAbilityExecutor）调用。
 
@@ -146,6 +170,9 @@ class MessageRouter:
             payload: 命令载荷
             request_id: 请求 ID（自动生成如果未提供）
             timeout: 超时时间（秒），None 使用默认值
+            cluster_id: 集群 ID — 经 ``_cluster_session[cluster_id]`` 选 target subject
+                session（决策 A：cluster 感知转发）。``<internal>`` 路径由 cluster-aware
+                sender 包装层（SupervisorActor）注入。None → ``SUBJECT_SESSION_NOT_BOUND``。
 
         Returns:
             命令响应载荷字典
@@ -167,8 +194,8 @@ class MessageRouter:
 
         result = await self._forward_to_subject(
             message,
-            session_id="<internal>",
             request_id=request_id,
+            cluster_id=cluster_id,
             command_label=command_type,
             timeout=timeout,
         )
@@ -195,7 +222,11 @@ class MessageRouter:
 
         if message.type in PERSIST_COMMANDS:
             return await self._forward_to_subject(
-                message, session_id, request_id, command_label="persist command"
+                message,
+                request_id=request_id,
+                cluster_id=self._session_cluster.get(session_id),
+                command_label="persist command",
+                exclude_session=session_id,
             )
 
         if message.type == CommandType.EXECUTE_ABILITY.value:
@@ -447,32 +478,44 @@ class MessageRouter:
     async def _forward_to_subject(
         self,
         message: Message,
-        session_id: str,
+        *,
         request_id: str,
+        cluster_id: str | None,
         command_label: str = "command",
         timeout: float | None = None,
+        exclude_session: str | None = None,
     ) -> Message:
+        """按 cluster 反查绑定的 target subject session 转发命令（决策 A）。
+
+        cluster_id 经 ``_cluster_session[cluster_id]`` 解析为 target subject session。
+        未绑定（cluster_id is None 或无绑定）统一报 ``SUBJECT_SESSION_NOT_BOUND``，
+        **不回退** ``subject_sessions[0]``。
+        """
         if timeout is None:
             timeout = 30.0
 
-        subject_sessions = self._connection_manager.active_sessions
-        subject_sessions = [s for s in subject_sessions if s != session_id]
+        target_session: str | None = None
+        if cluster_id is not None:
+            candidate = self._cluster_session.get(cluster_id)
+            if (
+                candidate is not None
+                and candidate in self._connection_manager.active_sessions
+                and candidate != exclude_session
+            ):
+                target_session = candidate
 
-        if not subject_sessions:
+        if target_session is None:
             logger.warning(
-                f"No Subject session available for {command_label} "
-                f"{message.type} (request_id={request_id})"
+                f"No bound Subject session for {command_label} "
+                f"{message.type} (request_id={request_id}, cluster_id={cluster_id})"
             )
-            return create_command_result(
-                request_id=request_id,
-                success=False,
-                error=f"No Subject connected to handle {command_label}",
-            )
+            return self._subject_session_not_bound_error(cluster_id, request_id)
 
-        pending = self._register_pending_request(request_id, session_id, message)
+        pending = self._register_pending_request(
+            request_id, exclude_session or "<internal>", message
+        )
 
         message_dict = message.model_dump_with_timestamp()
-        target_session = subject_sessions[0]
         if not await self._connection_manager.send_to(target_session, message_dict):
             self._pending_requests.pop(request_id, None)
             return create_command_result(
@@ -483,7 +526,7 @@ class MessageRouter:
 
         logger.info(
             f"Forwarded {message.type} {command_label} to Subject "
-            f"session {target_session} (request_id={request_id})"
+            f"session {target_session} (request_id={request_id}, cluster_id={cluster_id})"
         )
 
         try:
@@ -521,57 +564,15 @@ class MessageRouter:
             session_id,
         )
 
-        subject_sessions = self._connection_manager.active_sessions
-
-        if not subject_sessions:
-            logger.warning(
-                f"No Subject session available for execute ability (request_id={request_id})"
-            )
-            return create_command_result(
-                request_id=request_id,
-                success=False,
-                error="No Subject connected to execute ability",
-            )
-
-        pending = self._register_pending_request(request_id, session_id, message)
-
-        message_dict = message.model_dump_with_timestamp()
-        target_session = subject_sessions[0]
-        if not await self._connection_manager.send_to(target_session, message_dict):
-            self._pending_requests.pop(request_id, None)
-            return create_command_result(
-                request_id=request_id,
-                success=False,
-                error="Failed to send execute ability to Subject session",
-            )
-
-        logger.info(
-            f"Forwarded execute ability to Subject session {target_session} "
-            f"(request_id={request_id})"
+        # b 路径：cluster 来自发令 session 的绑定（与 persist 同构）
+        return await self._forward_to_subject(
+            message,
+            request_id=request_id,
+            cluster_id=self._session_cluster.get(session_id),
+            command_label="execute ability",
+            exclude_session=session_id,
+            timeout=self._ability_timeout,
         )
-
-        try:
-            result = await asyncio.wait_for(pending.future, timeout=self._ability_timeout)
-            return result
-        except TimeoutError:
-            logger.warning(
-                f"Execute ability request timed out "
-                f"(request_id={request_id}, timeout={self._ability_timeout}s)"
-            )
-            return create_command_result(
-                request_id=request_id,
-                success=False,
-                error="Execute ability timed out waiting for Subject response",
-            )
-        except Exception as e:
-            logger.error(f"Error waiting for execute ability response: {e}")
-            return create_command_result(
-                request_id=request_id,
-                success=False,
-                error=f"Execute ability failed: {e}",
-            )
-        finally:
-            self._pending_requests.pop(request_id, None)
 
     async def _handle_spawn_agent(
         self, message: Message, session_id: str, request_id: str
