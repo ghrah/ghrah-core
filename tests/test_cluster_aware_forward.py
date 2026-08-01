@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Core cluster 感知转发测试（S4.7b，决策 A）。
+"""Core cluster 感知转发测试。
 
 覆盖 Core→Subject 方向按 cluster 反查绑定 subject session 的转发：
 - 多 cluster 多 subject session：persist / execute_ability 转发不串扰
