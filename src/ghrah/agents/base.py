@@ -25,7 +25,6 @@ Hook:
 AbilityExecutor:
     - AbilityExecutor 接口将 Ability 执行从 Agent 循环中解耦
     - LocalAbilityExecutor：单体模式，在 Core 端本地执行 Ability + HITL
-    - RemoteAbilityExecutor：分布式模式，将执行委托给 Subject
 
 ContextManager:
     - ContextManager 统一管理消息、状态、链式历史和驱动循环控制状态
@@ -134,10 +133,6 @@ class ActorAgent:
         self._message_queue: asyncio.Queue[ChatMessage] = asyncio.Queue()
         self._iteration_state = IterationState()
 
-        # ────── 分布式模式：由 SupervisorActor 后置注入 ──────
-        self._command_sender: Any = None
-        self._event_bus: Any = None
-
         # 框架级消息历史（AgentMessage 对象，使用自有 ChatMessage 格式）
         # ContextManager 管理 ChatMessage 消息，这里保留框架 AgentMessage 对象的记录
         self._message_history: list[AgentMessage] = []
@@ -154,43 +149,6 @@ class ActorAgent:
     def _all_hooks(self, hooks: list[Hook]) -> None:
         self._hook_store.remove_owner(HookStore.AGENT_OWNER)
         self._hook_store.add_hooks(HookStore.AGENT_OWNER, hooks)
-
-    def inject_command_sender(self, command_sender: Any, event_bus: Any) -> None:
-        """由 SupervisorActor 在服务器模式下注入命令发送器和事件总线。
-
-        SupervisorActor 在创建 Agent 后，
-        将 MessageRouter（实现 CommandSender 协议）和 EventBus 注入到 Agent，
-        使 Agent 可以通过 Server 内部通信与 Subject 交互。
-
-        Args:
-            command_sender: CommandSender 实例（通常为 MessageRouter）
-            event_bus: EventBus 实例，用于发布事件
-        """
-        from ghrah.abilities.executor import LocalAbilityExecutor, RemoteAbilityExecutor
-        from ghrah.core.event_publisher import ServerEventPublisher
-
-        self._command_sender = command_sender
-        self._event_bus = event_bus
-
-        if event_bus is not None:
-            self._event_publisher = ServerEventPublisher(event_bus)
-            logger.info(
-                f"ActorAgent[{self.config.name}] injected ServerEventPublisher via event_bus"
-            )
-
-        if command_sender is not None and isinstance(self._ability_executor, LocalAbilityExecutor):
-            self._ability_executor = RemoteAbilityExecutor(
-                command_sender=command_sender,
-                agent_name=self.config.name,
-            )
-            logger.info(
-                f"ActorAgent[{self.config.name}] switched to RemoteAbilityExecutor"
-            )
-        elif command_sender is not None and isinstance(self._ability_executor, RemoteAbilityExecutor):
-            self._ability_executor._command_sender = command_sender
-            logger.info(
-                f"ActorAgent[{self.config.name}] updated RemoteAbilityExecutor command_sender"
-            )
 
     # ----------------------------------------------------------------
     # Ability 注册
@@ -274,7 +232,7 @@ class ActorAgent:
 
     def set_event_publisher(self, publisher: EventPublisher) -> None:
         """注入事件发布器（由 Supervisor 在创建时注入）。
-        本地模式使用 NullEventPublisher（默认），远程模式使用 ServerEventPublisher。
+        本地模式使用 NullEventPublisher（默认），Unit 挂载模式由宿主注入实现。
         同时更新 AbilityExecutor 的事件发布器。
 
         Args:
@@ -296,12 +254,12 @@ class ActorAgent:
     ) -> None:
         """接收 HITL 审批结果（由 Supervisor 通过 Ray.remote 调用）。
 
-        当 Observer 审批 HITL 请求后，Core Server 路由到
+        当 Observer 审批 HITL 请求后，宿主将结果路由到
         Supervisor，Supervisor 调用此方法将结果传递给 Agent。
 
         此方法委托给 AbilityExecutor.receive_hitl_response()。
 
-        流程：Observer → Subject → Core Server → Supervisor → Agent
+        流程：Observer → Subject → Core → Supervisor → Agent
 
         Args:
             ability_name: Ability 名称
@@ -450,14 +408,6 @@ class ActorAgent:
             self._iteration_state.max_iterations = self.config.max_iterations
             self._iteration_state.reset()
 
-            # ────── 分布式模式：CoreClient 自动连接（在新架构中始终连接） ──────
-            if self._command_sender is not None:
-                logger.debug(
-                    "ActorAgent.receive: command_sender available for agent=%s",
-                    self.config.name,
-                )
-            # ────── 结束 ──────
-
             # 驱动循环
             # 发布链头节点的 ActionChainUpdatedEvent
             head_node = self._context_manager.chain.head
@@ -524,8 +474,6 @@ class ActorAgent:
         """
         cm = self._context_manager
         accumulated_data: dict[str, Any] = {}
-
-        # 注意：CommandSender 在新架构中通过 MessageRouter 本地方法调用，无需显式连接
 
         while self._iteration_state.should_continue:
             # 1. BEFORE_ACTION hook（drive_loop 级）

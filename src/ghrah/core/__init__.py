@@ -10,12 +10,10 @@ from ghrah.core.ability_protocol import (
     ExecutorProtocol,
     RegistryProtocol,
 )
-from ghrah.core.command_sender import CommandSender
 from ghrah.core.config import AgentConfig, ContextConfig, ModelOverrides, WindowConfig
 from ghrah.core.event_publisher import (
     EventPublisher,
     NullEventPublisher,
-    ServerEventPublisher,
 )
 from ghrah.core.events import (
     ActionChainUpdatedEvent,
@@ -75,10 +73,7 @@ __all__ = [
     "HITLRequestEvent",
     # 事件发布
     "EventPublisher",
-    "ServerEventPublisher",
     "NullEventPublisher",
-    # 命令发送
-    "CommandSender",
     # HITL
     "HITLFutureStore",
     "HITLResult",

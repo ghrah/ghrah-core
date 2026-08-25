@@ -62,7 +62,7 @@ Or run other examples under the `examples` directory
 
 ```
 src/ghrah/
-├── core/           # Core abstractions: config, messages, events, exceptions, HITL, CommandSender
+├── core/           # Core abstractions: config, messages, events, exceptions, HITL
 ├── agents/         # Agent implementations: ActorAgent base class
 ├── chat/           # LLM interaction layer: ChatMessage, ContentBlock, ChatFormat
 │   └── format/     # Format adapters: OpenAIFormat, AnthropicFormat

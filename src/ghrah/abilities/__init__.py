@@ -84,7 +84,7 @@ from ghrah.abilities.execution_services import (
     ExecutionServices,
     ServiceKey,
 )
-from ghrah.abilities.executor import AbilityExecutor, LocalAbilityExecutor, RemoteAbilityExecutor
+from ghrah.abilities.executor import AbilityExecutor, LocalAbilityExecutor
 from ghrah.abilities.hook_context import HookContext
 from ghrah.abilities.hook_runner import HookRunner
 from ghrah.abilities.hook_store import HookStore
@@ -188,7 +188,6 @@ __all__ = [
     # 执行器
     "AbilityExecutor",
     "LocalAbilityExecutor",
-    "RemoteAbilityExecutor",
     # 工厂注册表
     "AbilityRegistry",
     # 内置 Ability

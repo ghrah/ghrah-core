@@ -54,7 +54,6 @@ class ContextConfig:
     - "json_file": JsonFileBackend（基于 JSON 文件，支持 gzip 压缩）
     - "memory": InMemoryBackend（纯内存，不持久化到磁盘）
     - "sqlite": SqliteBackend（基于 SQLite 数据库，WAL 模式支持并发读）
-    - "remote": RemoteBackend（通过 CommandSender 将持久化操作委托给 Subject）
     - None: 不启用持久化
 
     Attributes:
@@ -64,11 +63,6 @@ class ContextConfig:
         persistence_root_dir: 持久化存储根目录路径（json_file/sqlite 后端使用）
         persistence_compress: 是否启用 gzip 压缩持久化文件（json_file 后端），默认 True
         persistence_run_id: 持久化运行 ID，None 表示自动生成（格式：run_{ISO8601}）
-
-    Note:
-        remote 持久化后端所需的 CommandSender 与 agent_name 通过
-        ``create_persistence`` 的显式参数传入，不再挂在 ContextConfig 上
-        （避免 dataclass 携带运行时服务引用导致序列化递归）。
     """
 
     snapshot_interval: int = 5

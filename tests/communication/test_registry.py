@@ -189,7 +189,7 @@ class TestAgentInfo:
     ) -> None:
         """to_dict 在含 ContextConfig 时应正常序列化（ContextConfig 已纯数据）。
 
-        回归 RecursionError：曾因 ContextConfig.command_sender 持有运行时引用
+        回归 RecursionError：曾因 ContextConfig 携带运行时服务引用
         导致 dataclasses.asdict 触发递归。字段移除后 ContextConfig 为纯数据，
         可直接 asdict 序列化。
         """
@@ -210,5 +210,4 @@ class TestAgentInfo:
         assert isinstance(context_dict, dict)
         assert context_dict["snapshot_interval"] == 3
         assert context_dict["auto_persist"] is True
-        assert "command_sender" not in context_dict
         assert "persistence_agent_name" not in context_dict

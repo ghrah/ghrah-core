@@ -175,7 +175,7 @@ _COMMANDS: frozenset[str] = frozenset(
 def _core_event_to_dict(event: CoreEvent) -> tuple[str, dict[str, Any]]:
     """将 CoreEvent 转换为 (event_type_str, payload_dict)。
 
-    序列化逻辑对齐 ``ServerEventPublisher._create_event_message`` 的 payload
+    序列化逻辑对齐原 WS 服务器形态事件消息的 payload
     组装部分，但输出纯 dict，不包 WS Message/Envelope。
     """
     event_type_map: dict[str, str] = {
@@ -277,14 +277,14 @@ class UnitEventPublisher(EventPublisher):
 
 
 # ----------------------------------------------------------------
-# Ability 实例化（移植自 server/router.py::_create_ability_from_def）
+# Ability 实例化（移植自旧 WS 服务器形态的 router::_create_ability_from_def）
 # ----------------------------------------------------------------
 
 
 def _create_ability_from_def(ability_def: Any) -> AbilityProtocol:
     """将 AbilityDefinitionPayload 转换为 Ability 实例。
 
-    与 server/router.py 的 ``_create_ability_from_def`` 共享同一套常量与
+    与原 server/router.py 的 ``_create_ability_from_def`` 共享同一套常量与
     AbilityRegistry.create 工厂：
     1. 文件系统类（FS_ABILITY_TYPES）：将 require_hitl/allowed_paths/
        denied_paths/workspace_root 原始字段转换为 FSPermissionChecker。

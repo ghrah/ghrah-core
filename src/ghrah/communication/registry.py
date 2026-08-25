@@ -51,9 +51,8 @@ class AgentInfo:
 def _agent_config_to_dict(config: AgentConfig) -> dict[str, Any]:
     """将 AgentConfig 序列化为 wire 契约 dict（对齐 AgentConfigPayload）。
 
-    显式字段构造保持 wire 契约子集稳定。ContextConfig 已回归纯数据
-    （command_sender/persistence_agent_name 字段已移除），可直接用
-    dataclasses.asdict 序列化。
+    显式字段构造保持 wire 契约子集稳定。ContextConfig 为纯数据
+    dataclass，可直接用 dataclasses.asdict 序列化。
     """
     return {
         "name": config.name,

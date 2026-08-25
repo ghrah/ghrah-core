@@ -60,7 +60,7 @@ uv run python examples/simple_chat.py
 
 ```
 src/ghrah/
-├── core/           # 核心抽象：配置、消息、事件、异常、HITL、CommandSender
+├── core/           # 核心抽象：配置、消息、事件、异常、HITL
 ├── agents/         # Agent 实现：ActorAgent 基类
 ├── chat/           # LLM 交互层：ChatMessage、ContentBlock、ChatFormat
 │   └── format/     # 格式适配器：OpenAIFormat、AnthropicFormat

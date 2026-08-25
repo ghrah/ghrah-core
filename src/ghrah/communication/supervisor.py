@@ -29,40 +29,9 @@ from ghrah.core.message import AgentMessage, MessageType
 from ghrah.types.config_types import AgentConfig
 
 if TYPE_CHECKING:
-    from ghrah.core.command_sender import CommandSender
     from ghrah.core.event_publisher import EventPublisher
-    from ghrah.core.server.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
-
-
-class _ClusterAwareSender:
-    """CommandSender 包装层 — 为 ``<internal>`` 路径注入 cluster_id（决策 A）。
-
-    RemoteBackend / RemoteAbilityExecutor 经此包装向 Subject 转发命令时，
-    自动带上 SupervisorActor 的 ``_cluster_id``，使 Core→Subject 方向
-    按 cluster 反查绑定的 target subject session（闭合 Stage A 留痕）。
-    """
-
-    def __init__(self, router: CommandSender, cluster_id: str) -> None:
-        self._router = router
-        self._cluster_id = cluster_id
-
-    async def send_command(
-        self,
-        command_type: str,
-        payload: dict[str, Any],
-        request_id: str | None = None,
-        timeout: float | None = None,
-        cluster_id: str | None = None,
-    ) -> dict[str, Any]:
-        return await self._router.send_command(
-            command_type,
-            payload,
-            request_id=request_id,
-            timeout=timeout,
-            cluster_id=cluster_id if cluster_id is not None else self._cluster_id,
-        )
 
 
 class SupervisorActor:
@@ -91,31 +60,17 @@ class SupervisorActor:
 
     def __init__(
         self,
-        command_sender: CommandSender | None = None,
-        event_bus: EventBus | None = None,
         default_timeout: float = 300.0,
         cluster_id: str | None = None,
         event_publisher: EventPublisher | None = None,
     ) -> None:
-        self._command_sender = command_sender
-        self._event_bus = event_bus
         self._event_publisher = event_publisher
         self._cluster_id = cluster_id
         self._registry = AgentRegistry()
         self._router = MessageRouter(self._registry, default_timeout=default_timeout)
-        # cluster-aware 包装：为 <internal> 路径注入 cluster_id（决策 A）。
-        # 仅当同时有 command_sender 与 cluster_id 时包装；否则透传原 sender。
-        if command_sender is not None and cluster_id is not None:
-            self._cluster_aware_sender: CommandSender | None = _ClusterAwareSender(
-                command_sender, cluster_id
-            )
-        else:
-            self._cluster_aware_sender = command_sender
         logger.info(
             f"SupervisorActor initialized"
             f"{' cluster_id=' + cluster_id if cluster_id else ''}"
-            f"{' with command_sender' if command_sender else ''}"
-            f"{' with event_bus' if event_bus else ''}"
             f" default_timeout={default_timeout}"
         )
 
@@ -174,7 +129,6 @@ class SupervisorActor:
             config=config,
             abilities=abilities,
             supervisor=supervisor_handle,
-            command_sender=self._cluster_aware_sender,
             event_publisher=self._event_publisher,
         )
 
@@ -183,9 +137,6 @@ class SupervisorActor:
             config=config,
             actor_handle=actor_handle,
         )
-
-        if self._command_sender is not None or self._event_bus is not None:
-            actor_handle.inject_command_sender(self._cluster_aware_sender, self._event_bus)
 
         logger.info(f"Supervisor spawned agent: {config.name}")
         return config.name
@@ -397,7 +348,7 @@ class SupervisorActor:
     async def get_agent_handle(self, agent_name: str) -> Any:
         """获取 Agent 的 actor handle。
 
-        供 Core Server 使用，用于直接调用 Agent 方法
+        供挂载宿主（如 CoreUnit）使用，用于直接调用 Agent 方法
         （如 receive_hitl_response）。
 
         Args:

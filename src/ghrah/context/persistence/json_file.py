@@ -300,7 +300,7 @@ class JsonFileBackend(PersistenceBackend):
 
         注意：此实现遍历所有 agent 目录搜索 session，时间复杂度 O(n)。
         JsonFileBackend 主要用于验证性场合，不适用于生产环境。
-        如需高效按 ID 查询，请使用 SqliteBackend 或 RemoteBackend。
+        如需高效按 ID 查询，请使用 SqliteBackend。
 
         Args:
             session_id: session ID

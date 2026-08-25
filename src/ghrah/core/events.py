@@ -5,7 +5,7 @@
 """ghrah-core 事件定义。
 
 与 ghrah-protocol 的 EventType 对齐，定义 Core 侧产生的事件类型。
-Core 产生的事件通过 EventBus 推送到 Subject 连接，
+Core 产生的事件通过注入的 EventPublisher 推送到宿主（Subject），
 Subject 再将相关事件转发给 Observer。
 
 事件流方向：
