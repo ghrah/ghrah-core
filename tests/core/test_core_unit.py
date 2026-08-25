@@ -224,13 +224,9 @@ class TestSpawnTerminate:
 
 
 class TestExecuteAbility:
-    async def test_execute_ability_emits_ability_result(
-        self, unit: CoreUnit, ctx: FakeCtx
-    ) -> None:
+    async def test_execute_ability_emits_ability_result(self, unit: CoreUnit, ctx: FakeCtx) -> None:
         assert unit.supervisor is not None
-        await unit.supervisor.spawn_agent(
-            AgentConfig(name="agent-1"), abilities=[MockAbility()]
-        )
+        await unit.supervisor.spawn_agent(AgentConfig(name="agent-1"), abilities=[MockAbility()])
 
         result = await unit.handle_command(
             "execute_ability",
@@ -454,9 +450,7 @@ class TestReceiptShape:
 
 
 class TestStop:
-    async def test_stop_clears_agents_and_idempotent(
-        self, unit: CoreUnit, ctx: FakeCtx
-    ) -> None:
+    async def test_stop_clears_agents_and_idempotent(self, unit: CoreUnit, ctx: FakeCtx) -> None:
         await unit.handle_command("spawn_agent", _spawn_payload("agent-1"), None)
         await unit.handle_command("spawn_agent", _spawn_payload("agent-2"), None)
 
@@ -487,9 +481,7 @@ class TestStandalone:
 
     async def test_publisher_payload_shape(self) -> None:
         emitted: list[tuple[str, dict[str, Any]]] = []
-        publisher = UnitEventPublisher(
-            emit=lambda name, payload: emitted.append((name, payload))
-        )
+        publisher = UnitEventPublisher(emit=lambda name, payload: emitted.append((name, payload)))
         await publisher.publish(
             HITLRequestEvent(
                 agent_name="agent-1",
@@ -518,3 +510,266 @@ class TestStandalone:
         assert result["success"] is True
         assert "supervisor" in no_emit_ctx.services
         await unit.stop()
+
+
+# ----------------------------------------------------------------
+# j. per-agent 注入（聚合裁决 D-B/D-D：sandbox / persistence_factory /
+#    HITL 运行时覆盖层 / Fork 上下文连续）
+# ----------------------------------------------------------------
+
+
+class FakeCommandRunner:
+    """SandboxExecutor duck-type stub（记录命令）。"""
+
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+
+    async def run_command(
+        self, command: str, *, cwd: str | None = None, timeout: float | None = None
+    ) -> Any:
+        self.commands.append(command)
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+
+class FakePersistenceBackend:
+    """PersistenceBackend duck-type stub（记录 save 调用）。"""
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+        self.saved: list[Any] = []
+
+    async def connect(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def save_node(self, node: Any) -> None:
+        self.saved.append(node)
+
+    async def load_chain(self, agent_name: str) -> list[Any]:
+        return []
+
+    async def load_chain_meta(self, agent_name: str) -> Any:
+        return None
+
+
+def _ability_def(ability_type: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"ability_type": ability_type, "params": params or {}}
+
+
+def _spawn_payload_with_abilities(name: str, abilities: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "config": {"name": name, "system_prompt": "You are a test agent."},
+        "abilities": abilities,
+    }
+
+
+def _actor_of(unit: CoreUnit, name: str) -> Any:
+    assert unit.supervisor is not None
+    return unit.supervisor._registry.get_info(name).actor_handle
+
+
+class TestPerAgentInjection:
+    async def test_sandbox_command_runner_injected_into_execute_command(self, ctx: FakeCtx) -> None:
+        runner = FakeCommandRunner()
+        unit = create_core_unit(CoreUnitConfig(command_runner=runner))
+        await unit.init(ctx)
+
+        result = await unit.handle_command(
+            "spawn_agent",
+            _spawn_payload_with_abilities(
+                "sandboxed", [_ability_def("execute_command", {"require_approval": False})]
+            ),
+            None,
+        )
+        assert result["success"] is True
+
+        actor = _actor_of(unit, "sandboxed")
+        ability = actor._abilities["execute_command"]
+        assert ability._command_runner is runner
+
+    async def test_no_command_runner_keeps_standalone_subprocess_mode(self, unit: CoreUnit) -> None:
+        result = await unit.handle_command(
+            "spawn_agent",
+            _spawn_payload_with_abilities("plain", [_ability_def("execute_command")]),
+            None,
+        )
+        assert result["success"] is True
+
+        actor = _actor_of(unit, "plain")
+        ability = actor._abilities["execute_command"]
+        assert ability._command_runner is None
+
+    async def test_persistence_factory_reaches_agent_context_manager(self, ctx: FakeCtx) -> None:
+        backend = FakePersistenceBackend(tag="custom")
+        calls: list[str] = []
+
+        def factory(config: Any) -> FakePersistenceBackend:
+            calls.append(config.name)
+            return backend
+
+        unit = create_core_unit(CoreUnitConfig(persistence_factory=factory))
+        await unit.init(ctx)
+
+        result = await unit.handle_command("spawn_agent", _spawn_payload("persisted"), None)
+        assert result["success"] is True
+        assert calls == ["persisted"]
+
+        actor = _actor_of(unit, "persisted")
+        assert actor._context_manager.persistence is backend
+
+    async def test_default_persistence_untouched_without_factory(self, unit: CoreUnit) -> None:
+        result = await unit.handle_command("spawn_agent", _spawn_payload("default-p"), None)
+        assert result["success"] is True
+        actor = _actor_of(unit, "default-p")
+        # 无 context 配置 → 默认 persistence 为 None（AgentBuilder 现状）
+        assert actor._context_manager.persistence is None
+
+
+class TestHITLRuntimeOverride:
+    """HITL 运行时覆盖层（语义平移自 subject 侧旧 HITLPolicy）。"""
+
+    async def test_auto_approve_overrides_manifest_require_hitl(self, ctx: FakeCtx) -> None:
+        unit = create_core_unit(CoreUnitConfig(auto_approve_abilities=("execute_command",)))
+        await unit.init(ctx)
+
+        result = await unit.handle_command(
+            "spawn_agent",
+            _spawn_payload_with_abilities(
+                "auto", [_ability_def("execute_command", {"require_approval": True})]
+            ),
+            None,
+        )
+        assert result["success"] is True
+        checker = _actor_of(unit, "auto")._abilities["execute_command"]._checker
+        assert checker._require_approval is False
+
+    async def test_manifest_require_hitl_respected_without_override(self, unit: CoreUnit) -> None:
+        result = await unit.handle_command(
+            "spawn_agent",
+            _spawn_payload_with_abilities(
+                "strict", [_ability_def("execute_command", {"require_approval": True})]
+            ),
+            None,
+        )
+        assert result["success"] is True
+        checker = _actor_of(unit, "strict")._abilities["execute_command"]._checker
+        assert checker._require_approval is True
+
+    async def test_fallback_default_when_manifest_silent(self, ctx: FakeCtx) -> None:
+        unit = create_core_unit(CoreUnitConfig(require_approval_by_default=False))
+        await unit.init(ctx)
+
+        result = await unit.handle_command(
+            "spawn_agent",
+            _spawn_payload_with_abilities("loose", [_ability_def("execute_command")]),
+            None,
+        )
+        assert result["success"] is True
+        checker = _actor_of(unit, "loose")._abilities["execute_command"]._checker
+        assert checker._require_approval is False
+
+    async def test_fs_ability_require_hitl_fallback(self, ctx: FakeCtx) -> None:
+        """FS 能力 manifest 未声明 require_hitl → 兜底默认覆盖（旧默认恒 True）。"""
+        unit = create_core_unit(CoreUnitConfig(require_approval_by_default=False))
+        await unit.init(ctx)
+
+        result = await unit.handle_command(
+            "spawn_agent",
+            _spawn_payload_with_abilities(
+                "fs-loose", [_ability_def("read_file", {"workspace_root": "/tmp"})]
+            ),
+            None,
+        )
+        assert result["success"] is True
+        checker = _actor_of(unit, "fs-loose")._abilities["read_file"]._checker
+        assert checker._require_approval is False
+
+
+class TestForkContextContinuity:
+    """Fork 场景验证（补遗 §四）：换实现不丢上下文。"""
+
+    async def test_per_agent_backend_swap_and_rebase_context(self, tmp_path: Any) -> None:
+        """换持久化后端 = 新 spawn 注入新 factory；Fork = 上下文继承（正交）。"""
+        from ghrah.context.manager import ContextManager
+        from ghrah.context.persistence.sqlite_backend import SqliteBackend
+        from ghrah.context.rebase import create_rebased_context
+
+        # Agent A：真实 sqlite 后端，产生链
+        backend_a = SqliteBackend(db_path=tmp_path / "a.db", run_id="run-a")
+        await backend_a.connect()
+        from ghrah.chat.factory import ChatMessageFactory
+
+        cm_a = ContextManager(
+            agent_name="agent-a",
+            persistence=backend_a,
+            auto_persist=True,
+            message_factory=ChatMessageFactory(),
+        )
+        for step in (1, 2):
+            cm_a.begin_iteration()
+            cm_a.add_messages([type("M", (), {"role": "assistant", "content": f"step {step}"})()])
+            cm_a.commit_iteration(ability_names=[], action_results=[])
+        head_a = cm_a.chain.active_head
+        assert head_a is not None
+
+        # per-agent 注入：新 spawn agent B 用 memory fake 后端（factory 生效证明）
+        backend_b = FakePersistenceBackend(tag="memory")
+        actor_b_cm_factory_calls: list[str] = []
+
+        def factory_b(config: Any) -> FakePersistenceBackend:
+            actor_b_cm_factory_calls.append(config.name)
+            return backend_b
+
+        unit = create_core_unit(CoreUnitConfig(persistence_factory=factory_b))
+        await unit.init(FakeCtx())
+        result = await unit.handle_command("spawn_agent", _spawn_payload("agent-b"), None)
+        assert result["success"] is True
+        cm_b = _actor_of(unit, "agent-b")._context_manager
+        assert cm_b.persistence is backend_b
+        assert actor_b_cm_factory_calls == ["agent-b"]
+
+        # Fork：从 A 链头 rebase 出新 CM——上下文连续（链头记 rebase 元数据）
+        rebased = create_rebased_context(
+            source_cm=cm_a, agent_name="agent-c", system_prompt="rebased"
+        )
+        rebased_head = rebased.chain.active_head
+        assert rebased_head is not None
+        assert rebased_head.metadata["rebase_from_agent"] == "agent-a"
+        assert rebased_head.metadata["rebase_from_node_id"] == head_a.id
+        # 继承 A 的消息（2 条 thought），过滤 system
+        assert len(rebased.message_store.current_messages) >= 2
+        await backend_a.close()
+
+    async def test_strategy_swap_via_new_config_keeps_fork_lineage(self, ctx: FakeCtx) -> None:
+        """换 HITL 策略 = 新 CoreUnitConfig spawn 新 agent（fork 链可接续）。"""
+        from ghrah.context.rebase import create_rebased_context
+
+        # 旧策略 agent（严格）
+        unit_strict = create_core_unit(CoreUnitConfig())
+        await unit_strict.init(ctx)
+        await unit_strict.handle_command("spawn_agent", _spawn_payload("old-agent"), None)
+        cm_old = _actor_of(unit_strict, "old-agent")._context_manager
+        cm_old.begin_iteration()
+        cm_old.add_messages([type("M", (), {"role": "assistant", "content": "legacy work"})()])
+        cm_old.commit_iteration(ability_names=[], action_results=[])
+        head = cm_old.chain.active_head
+        assert head is not None
+
+        # 新策略 unit（宽松）spawn agent-c，fork 自 old-agent 链头
+        unit_loose = create_core_unit(
+            CoreUnitConfig(require_approval_by_default=False, cluster_id="policy-v2")
+        )
+        await unit_loose.init(FakeCtx())
+        await unit_loose.handle_command("spawn_agent", _spawn_payload("new-agent"), None)
+
+        rebased = create_rebased_context(
+            source_cm=cm_old, agent_name="new-agent-fork", system_prompt="v2"
+        )
+        assert rebased.chain.active_head is not None
+        assert rebased.chain.active_head.metadata["rebase_from_agent"] == "old-agent"
+        # 新策略对新 spawn 生效（旧 unit 不受影响）
+        checker_loose = unit_loose._config.require_approval_by_default
+        checker_strict = unit_strict._config.require_approval_by_default
+        assert checker_loose is False and checker_strict is True

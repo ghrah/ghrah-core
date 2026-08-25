@@ -78,8 +78,13 @@ def _build_window_manager(config: WindowConfig) -> WindowManager:
 
 def _build_context_manager(
     config: AgentConfig,
+    persistence_factory: Callable[[AgentConfig], Any] | None = None,
 ) -> ContextManager:
-    """从 AgentConfig 构建 ContextManager（含 WindowManager + Persistence）。"""
+    """从 AgentConfig 构建 ContextManager（含 WindowManager + Persistence）。
+
+    ``persistence_factory`` 为 per-agent 注入点：传入时以工厂构造持久化后端
+    （替代默认 ``create_persistence``）；None 时维持默认行为。
+    """
     from ghrah.chat.factory import ChatMessageFactory
 
     window_manager = None
@@ -88,7 +93,10 @@ def _build_context_manager(
 
     context_config = config.context
     persistence = None
-    if context_config is not None:
+    if persistence_factory is not None:
+        # per-agent 注入：工厂直接生效（替代 context 配置判定）
+        persistence = persistence_factory(config)
+    elif context_config is not None:
         persistence = create_persistence(
             context_config,
             agent_name=config.name,
@@ -131,6 +139,7 @@ class AgentBuilder:
         ability_executor: AbilityExecutor | None = None,
         event_publisher: EventPublisher | None = None,
         llm_factory: Callable[[AgentConfig], LLMProtocol] | None = None,
+        persistence_factory: Callable[[AgentConfig], Any] | None = None,
     ) -> Any:
         """从 AgentConfig 构建 ActorAgent（默认注入策略）。
 
@@ -141,16 +150,19 @@ class AgentBuilder:
             ability_executor: 可选的 AbilityExecutor，默认创建 LocalAbilityExecutor
             event_publisher: 可选的 EventPublisher，默认 NullEventPublisher
             llm_factory: 可选的 LLM 工厂回调，默认从 agentconf 创建
+            persistence_factory: 可选的 per-agent 持久化后端工厂
+                （``(AgentConfig) -> PersistenceBackend | None``；None 走默认
+                ``create_persistence``）。新 spawn 生效，存量 agent 不受影响。
 
         Returns:
             配置好的 ActorAgent 实例
         """
         from ghrah.agents.base import ActorAgent
 
-        context_manager = _build_context_manager(config)
+        context_manager = _build_context_manager(config, persistence_factory)
 
         def _cm_factory() -> ContextManager:
-            return _build_context_manager(config)
+            return _build_context_manager(config, persistence_factory)
 
         if ability_executor is None:
             ability_executor = LocalAbilityExecutor(

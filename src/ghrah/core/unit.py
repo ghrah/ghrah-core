@@ -104,12 +104,27 @@ class CoreUnitConfig:
             CoreUnit 在 spawn 后对 executor 做 best-effort 调整。
         workspace_root: 工作区根目录默认值；AgentConfig 未显式指定时应用
             （None 表示不限制）。
+        auto_approve_abilities: HITL 运行时覆盖层——管理员强制放行的能力名
+            白名单（覆盖 manifest 的 require_hitl=True；语义平移自 subject
+            侧旧 HITLPolicy 的同名覆盖层）。
+        require_approval_by_default: 对 manifest 未声明审批要求的能力的兜底
+            策略（语义平移自旧 HITLPolicy）。
+        command_runner: execute_command 能力的命令执行器注入（per-cluster
+            构造期注入，duck-typed ``run_command``；None = standalone 直跑
+            subprocess）。Subject 挂载模式下传 SandboxExecutor。
+        persistence_factory: per-agent 持久化后端工厂
+            （``(AgentConfig) -> PersistenceBackend | None``；None = Core
+            内建 sqlite）。新 spawn 生效，存量 agent 不受影响。
     """
 
     cluster_id: str = "default"
     default_timeout: float = 300.0
     hitl_timeout: float = 300.0
     workspace_root: str | None = None
+    auto_approve_abilities: tuple[str, ...] = ()
+    require_approval_by_default: bool = True
+    command_runner: Any = None
+    persistence_factory: Callable[[Any], Any] | None = None
 
 
 # ----------------------------------------------------------------
@@ -260,20 +275,14 @@ class UnitEventPublisher(EventPublisher):
         """发布事件到宿主 ctx。"""
         event_type, payload = _core_event_to_dict(event)
         if self._emit is None:
-            logger.debug(
-                f"Event published (unit-null): {event_type} for agent {event.agent_name}"
-            )
+            logger.debug(f"Event published (unit-null): {event_type} for agent {event.agent_name}")
             return
         try:
             self._emit(f"core:{event_type}", payload)
-            logger.debug(
-                f"Event published (unit): core:{event_type} for agent {event.agent_name}"
-            )
+            logger.debug(f"Event published (unit): core:{event_type} for agent {event.agent_name}")
         except Exception:
             # fire-and-forget：emit 失败不阻断驱动循环
-            logger.exception(
-                f"Failed to emit core:{event_type} for agent {event.agent_name}"
-            )
+            logger.exception(f"Failed to emit core:{event_type} for agent {event.agent_name}")
 
 
 # ----------------------------------------------------------------
@@ -281,7 +290,13 @@ class UnitEventPublisher(EventPublisher):
 # ----------------------------------------------------------------
 
 
-def _create_ability_from_def(ability_def: Any) -> AbilityProtocol:
+def _create_ability_from_def(
+    ability_def: Any,
+    *,
+    command_runner: Any = None,
+    auto_approve_abilities: tuple[str, ...] = (),
+    require_approval_by_default: bool = True,
+) -> AbilityProtocol:
     """将 AbilityDefinitionPayload 转换为 Ability 实例。
 
     与原 server/router.py 的 ``_create_ability_from_def`` 共享同一套常量与
@@ -291,6 +306,15 @@ def _create_ability_from_def(ability_def: Any) -> AbilityProtocol:
     2. execute_command：将 require_approval 标记转换为
        CommandSafetyChecker + CommandApprovalHook 注入构造函数。
     3. end_task：统一 mode="toolcall"。
+
+    HITL 运行时覆盖层（语义平移自 subject 侧旧 HITLPolicy）：
+    - ``auto_approve_abilities`` 白名单 → 强制免审批（覆盖 manifest
+      require_hitl=True）；
+    - manifest 未声明审批字段时 → ``require_approval_by_default`` 兜底。
+    决策优先级：auto_approve > manifest 显式声明 > 兜底默认。
+
+    ``command_runner`` 非 None 时注入 execute_command（Subject 挂载模式的
+    SandboxExecutor；None = standalone 直跑 subprocess）。
     """
     from ghrah.abilities import (
         FS_ABILITY_TYPES,
@@ -302,28 +326,44 @@ def _create_ability_from_def(ability_def: Any) -> AbilityProtocol:
 
     params = dict(ability_def.params) if ability_def.params else {}
     ability_type = ability_def.ability_type
+    auto_approved = ability_type in auto_approve_abilities
 
     _fs_permission_keys = {"require_hitl", "allowed_paths", "denied_paths", "workspace_root"}
 
     if ability_type in FS_ABILITY_TYPES and _fs_permission_keys & set(params.keys()):
         fs_params = {k: params.pop(k) for k in _fs_permission_keys if k in params}
-        require_hitl = fs_params.get("require_hitl", True)
         allowed_paths = fs_params.get("allowed_paths")
         denied_paths = fs_params.get("denied_paths")
         workspace_root = fs_params.get("workspace_root")
+        # HITL 覆盖层：auto_approve > manifest require_hitl > 兜底默认
+        if auto_approved:
+            require_approval = False
+        elif "require_hitl" in fs_params and isinstance(fs_params["require_hitl"], bool):
+            require_approval = fs_params["require_hitl"]
+        else:
+            require_approval = require_approval_by_default
         checker = FSPermissionChecker(
             allowed_paths=allowed_paths,
             workspace_root=workspace_root,
             denied_paths=denied_paths,
-            require_approval=require_hitl if isinstance(require_hitl, bool) else True,
+            require_approval=require_approval,
         )
         params["permission_checker"] = checker
 
     if ability_type == "execute_command":
-        require_approval = params.pop("require_approval", True)
-        command_checker = CommandSafetyChecker(require_approval=bool(require_approval))
+        # HITL 覆盖层：auto_approve > manifest require_approval > 兜底默认
+        manifest_requirement = params.pop("require_approval", None)
+        if auto_approved:
+            require_approval = False
+        elif manifest_requirement is not None:
+            require_approval = bool(manifest_requirement)
+        else:
+            require_approval = require_approval_by_default
+        command_checker = CommandSafetyChecker(require_approval=require_approval)
         params["command_checker"] = command_checker
         params["hooks"] = [CommandApprovalHook(command_checker)]
+        if command_runner is not None:
+            params["command_runner"] = command_runner
 
     if ability_type == "end_task":
         params["mode"] = "toolcall"
@@ -544,12 +584,8 @@ class CoreUnit:
             system_prompt=sp.config.system_prompt,
             max_iterations=sp.config.max_iterations,
             communication_timeout=sp.config.communication_timeout,
-            window=(
-                build_window_from_dict(sp.config.window) if sp.config.window else None
-            ),
-            context=(
-                build_context_from_dict(sp.config.context) if sp.config.context else None
-            ),
+            window=(build_window_from_dict(sp.config.window) if sp.config.window else None),
+            context=(build_context_from_dict(sp.config.context) if sp.config.context else None),
             model_overrides=(
                 build_model_overrides_from_dict(sp.config.model_overrides)
                 if sp.config.model_overrides
@@ -563,7 +599,12 @@ class CoreUnit:
             ability_instances = []
             for ability_def in sp.abilities:
                 try:
-                    ability = _create_ability_from_def(ability_def)
+                    ability = _create_ability_from_def(
+                        ability_def,
+                        command_runner=self._config.command_runner,
+                        auto_approve_abilities=self._config.auto_approve_abilities,
+                        require_approval_by_default=(self._config.require_approval_by_default),
+                    )
                     ability_instances.append(ability)
                 except KeyError as e:
                     return self._err(
@@ -577,7 +618,11 @@ class CoreUnit:
                     )
 
         try:
-            agent_name = await supervisor.spawn_agent(core_config, abilities=ability_instances)
+            agent_name = await supervisor.spawn_agent(
+                core_config,
+                abilities=ability_instances,
+                persistence_factory=self._config.persistence_factory,
+            )
         except RegistryError as e:
             return self._err(str(e))
 
@@ -720,11 +765,7 @@ class CoreUnit:
         """
         supervisor = self._require_supervisor()
         ep = ExecuteAbilityPayload.model_validate(payload)
-        request_id = (
-            ep.request_id
-            or getattr(cmd_ctx, "request_id", None)
-            or generate_request_id()
-        )
+        request_id = ep.request_id or getattr(cmd_ctx, "request_id", None) or generate_request_id()
         logger.info(
             "CoreUnit.execute_ability: agent=%s ability=%s request_id=%s",
             ep.agent_name,
@@ -736,9 +777,7 @@ class CoreUnit:
         abilities = getattr(agent_handle, "_abilities", {})
         ability = abilities.get(ep.ability_name)
         if ability is None:
-            return self._err(
-                f"Ability '{ep.ability_name}' not found on agent '{ep.agent_name}'"
-            )
+            return self._err(f"Ability '{ep.ability_name}' not found on agent '{ep.agent_name}'")
         executor = getattr(agent_handle, "_ability_executor", None)
         if executor is None:
             return self._err(f"Agent '{ep.agent_name}' has no ability executor")

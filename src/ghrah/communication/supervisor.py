@@ -15,6 +15,7 @@ SupervisorActor 是整个多 Agent 系统的中心编排者：
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ghrah.agents.builder import AgentBuilder
@@ -78,6 +79,8 @@ class SupervisorActor:
         self,
         config: AgentConfig,
         abilities: list[AbilityProtocol] | None = None,
+        *,
+        persistence_factory: Callable[[AgentConfig], Any] | None = None,
     ) -> str:
         """创建并注册一个 Agent，返回 agent name。
 
@@ -92,6 +95,8 @@ class SupervisorActor:
             config: Agent 配置
             abilities: 可选的自定义 Ability 列表。
                        None 表示注册默认基础 Ability。
+            persistence_factory: 可选的 per-agent 持久化后端工厂
+                （透传 AgentBuilder.from_config；None 走 Core 内建默认）。
 
         Returns:
             Agent 名称
@@ -130,6 +135,7 @@ class SupervisorActor:
             abilities=abilities,
             supervisor=supervisor_handle,
             event_publisher=self._event_publisher,
+            persistence_factory=persistence_factory,
         )
 
         self._registry.register(
