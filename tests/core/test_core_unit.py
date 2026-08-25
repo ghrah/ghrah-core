@@ -347,6 +347,76 @@ class TestHITL:
         assert resp["success"] is True
         assert resp["data"]["resolved"] is False
 
+    async def test_hitl_timeout_blocks_execution(self, unit: CoreUnit, ctx: FakeCtx) -> None:
+        """HITL 超时路径：future 超时 → ability 不执行 → ability_result(success=False)。"""
+        assert unit.supervisor is not None
+        ability = MockAbility(hooks=[HITLBlockingHook()])
+        await unit.supervisor.spawn_agent(AgentConfig(name="agent-1"), abilities=[ability])
+
+        # 缩短 HITL 等待超时（CoreUnitConfig.hitl_timeout 的 best-effort 应用
+        # 仅覆盖 unit 命令面 spawn 路径，直挂 spawn 时直接调 executor 字段）
+        handle = await unit.supervisor.get_agent_handle("agent-1")
+        handle._ability_executor._hitl_timeout = 0.05
+
+        result = await unit.handle_command(
+            "execute_ability",
+            {
+                "request_id": "req-timeout",
+                "agent_name": "agent-1",
+                "ability_name": "mock_ability",
+                "tool_args": {"call_id": "call-t"},
+            },
+            None,
+        )
+        assert ability.execute_count == 0
+        assert result["success"] is True
+        assert result["data"]["success"] is False
+        name, payload = next(
+            e for e in ctx.events if e[0] == f"core:{EventType.ABILITY_RESULT.value}"
+        )
+        assert payload["request_id"] == "req-timeout"
+        assert payload["success"] is False
+
+    async def test_stop_cancels_pending_hitl(self, unit: CoreUnit, ctx: FakeCtx) -> None:
+        """stop() 清理路径：cancel_all 取消 pending future，在途 execute_ability 终结。"""
+        assert unit.supervisor is not None
+        ability = MockAbility(hooks=[HITLBlockingHook()])
+        await unit.supervisor.spawn_agent(AgentConfig(name="agent-1"), abilities=[ability])
+
+        task = asyncio.create_task(
+            unit.handle_command(
+                "execute_ability",
+                {
+                    "request_id": "req-stop",
+                    "agent_name": "agent-1",
+                    "ability_name": "mock_ability",
+                    "tool_args": {"call_id": "call-s"},
+                },
+                None,
+            )
+        )
+
+        handle = await unit.supervisor.get_agent_handle("agent-1")
+        store = handle._ability_executor.hitl_store
+        for _ in range(100):
+            if store.list_pending():
+                break
+            await asyncio.sleep(0.01)
+        assert store.list_pending() == [("agent-1", "mock_ability", "call-s")]
+
+        await unit.stop()
+        assert store.list_pending() == []
+
+        # future 被取消 → wait_for 传播 CancelledError，在途命令任务随之终结
+        # （若 handler 层捕获则为失败回执，两种终结形态均可接受）
+        try:
+            result = await asyncio.wait_for(task, timeout=2.0)
+        except asyncio.CancelledError:
+            pass
+        else:
+            assert result["success"] is False or result["data"]["success"] is False
+        assert ability.execute_count == 0
+
 
 # ----------------------------------------------------------------
 # g. 回执形状
