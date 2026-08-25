@@ -30,6 +30,7 @@ from ghrah.types.config_types import AgentConfig
 
 if TYPE_CHECKING:
     from ghrah.core.command_sender import CommandSender
+    from ghrah.core.event_publisher import EventPublisher
     from ghrah.core.server.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -94,9 +95,11 @@ class SupervisorActor:
         event_bus: EventBus | None = None,
         default_timeout: float = 300.0,
         cluster_id: str | None = None,
+        event_publisher: EventPublisher | None = None,
     ) -> None:
         self._command_sender = command_sender
         self._event_bus = event_bus
+        self._event_publisher = event_publisher
         self._cluster_id = cluster_id
         self._registry = AgentRegistry()
         self._router = MessageRouter(self._registry, default_timeout=default_timeout)
@@ -172,6 +175,7 @@ class SupervisorActor:
             abilities=abilities,
             supervisor=supervisor_handle,
             command_sender=self._cluster_aware_sender,
+            event_publisher=self._event_publisher,
         )
 
         self._registry.register(
@@ -530,3 +534,20 @@ class SupervisorActor:
                 results[info.name] = False
 
         return results
+
+    async def shutdown(self) -> None:
+        """终止所有已注册 Agent（供 CoreUnit.stop 等挂载宿主调用）。
+
+        语义对齐 server/router.py 的 ``_handle_shutdown_cluster``：
+        遍历 registry 逐个 terminate，单个失败仅记日志不中断整体。
+        幂等，可重复调用安全（空 registry 时为无操作）。
+        """
+        agents = await self.list_agents()
+        for agent_info in agents:
+            name = agent_info.get("name", "")
+            if name:
+                try:
+                    await self.terminate_agent(name)
+                except Exception:
+                    logger.warning(f"Failed to terminate agent '{name}' during shutdown")
+        logger.info(f"Supervisor shutdown ({len(agents)} agents terminated)")
