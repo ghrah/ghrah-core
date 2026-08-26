@@ -267,20 +267,23 @@ class SupervisorActor:
         sender: str = "user",
         msg_type: MessageType = MessageType.CHAT,
         timeout: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """发送消息到指定 Agent，返回回复内容。
 
         超时优先级：
         1. 显式传入的 timeout 参数
         2. 目标 Agent 配置的 communication_timeout
-        3. Supervisor 的 default_timeout
+        3. Router 的 default_timeout
 
         Args:
             target: 目标 Agent 名称
             content: 消息内容
             sender: 发送者标识
             msg_type: 消息类型
-            timeout: 超时时间（秒），None 使用目标 Agent 配置或默认值，-1 表示无限等待
+            timeout: 超时时间（秒），None 使用默认值，-1 表示无限等待
+            metadata: 扩展元数据（如 Room 投递的 room_id；随消息入链
+                messages_delta，供回复归属推导消费）
 
         Returns:
             回复文本内容
@@ -292,6 +295,7 @@ class SupervisorActor:
             sender=sender,
             msg_type=msg_type,
             timeout=effective_timeout,
+            metadata=metadata,
         )
         return response.content
 

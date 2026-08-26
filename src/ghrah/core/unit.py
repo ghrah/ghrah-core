@@ -681,6 +681,7 @@ class CoreUnit:
             content=sp.content,
             sender=sp.sender,
             timeout=sp.timeout,
+            metadata=sp.metadata,
         )
         return self._ok({"content": result})
 

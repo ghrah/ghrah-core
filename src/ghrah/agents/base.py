@@ -391,6 +391,9 @@ class ActorAgent:
             await self._ensure_llm()
 
             # 将用户消息入队，供 _drive_loop 在迭代中消费
+            # AgentMessage.metadata（如 Room 投递的 room_id）合入 ChatMessage
+            # metadata——随 commit_iteration 落入链节点 messages_delta，
+            # 供回复归属推导（Room Filter）消费
             if message.content_blocks:
                 text_or_blocks: str | list[ContentBlock] = blocks_from_dicts(
                     message.content_blocks
@@ -401,6 +404,7 @@ class ActorAgent:
                 ChatMessage.user(
                     text_or_blocks=text_or_blocks,
                     source=classify_source(message.sender),
+                    metadata=dict(message.metadata) if message.metadata else {},
                 )
             )
 

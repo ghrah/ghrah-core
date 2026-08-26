@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from ghrah.communication.registry import AgentRegistry
 from ghrah.core.exceptions import (
@@ -160,8 +161,9 @@ class MessageRouter:
         sender: str = "user",
         msg_type: MessageType = MessageType.CHAT,
         timeout: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> AgentMessage:
-        """便捷方法：发送消息并等待响应。
+        """发送消息并等待响应。
 
         Args:
             target: 目标 Agent 名称
@@ -169,6 +171,7 @@ class MessageRouter:
             sender: 发送者标识
             msg_type: 消息类型
             timeout: 超时时间（秒），None 使用默认值，-1 表示无限等待
+            metadata: 扩展元数据（如 Room 投递的 room_id，随链节点落档）
 
         Returns:
             目标 Agent 的回复
@@ -178,5 +181,6 @@ class MessageRouter:
             recipient=target,
             content=content,
             type=msg_type,
+            metadata=metadata or {},
         )
         return await self.route(message, timeout=timeout)
