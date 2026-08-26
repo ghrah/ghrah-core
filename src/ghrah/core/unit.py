@@ -116,6 +116,10 @@ class CoreUnitConfig:
         persistence_factory: per-agent 持久化后端工厂
             （``(AgentConfig) -> PersistenceBackend | None``；None = Core
             内建 sqlite）。新 spawn 生效，存量 agent 不受影响。
+        manifest_store: ManifestStoreProtocol 实现（duck-typed），
+            供 manifest_ref spawn 解析 agent manifest。None = standalone
+            模式（manifest_ref spawn 明确报错，对齐 ROOM_BRIDGE_UNAVAILABLE
+            模式）。Subject 挂载模式下注入其 ManifestStore。
     """
 
     cluster_id: str = "default"
@@ -126,6 +130,8 @@ class CoreUnitConfig:
     require_approval_by_default: bool = True
     command_runner: Any = None
     persistence_factory: Callable[[Any], Any] | None = None
+    # duck-typed ManifestStoreProtocol；None = standalone（manifest_ref spawn 报错）
+    manifest_store: Any = None
 
 
 # ----------------------------------------------------------------
@@ -289,6 +295,25 @@ class UnitEventPublisher(EventPublisher):
 # ----------------------------------------------------------------
 # Ability 实例化（移植自旧 WS 服务器形态的 router::_create_ability_from_def）
 # ----------------------------------------------------------------
+
+
+def _agent_config_to_wire(config: AgentConfig) -> dict[str, Any]:
+    """AgentConfig → wire 事件 dict（对齐 AgentConfigPayload 字段，供 AGENT_SPAWNED 事件）。"""
+    import dataclasses
+
+    return {
+        "name": config.name,
+        "agent_config_name": config.agent_config_name,
+        "description": config.description,
+        "system_prompt": config.system_prompt,
+        "max_iterations": config.max_iterations,
+        "communication_timeout": config.communication_timeout,
+        "window": dataclasses.asdict(config.window) if config.window else None,
+        "context": dataclasses.asdict(config.context) if config.context else None,
+        "model_overrides": (
+            dataclasses.asdict(config.model_overrides) if config.model_overrides else None
+        ),
+    }
 
 
 def _create_ability_from_def(
@@ -577,15 +602,55 @@ class CoreUnit:
     # ----------------------------------------------------------------
 
     async def _handle_spawn_agent(self, payload: dict[str, Any], cmd_ctx: Any) -> dict[str, Any]:
-        """spawn_agent — 接收已物化的 SpawnAgentPayload（移植自 router:577-708）。
+        """spawn_agent — 接收 SpawnAgentPayload。
 
-        manifest 展开/权限物化在 subject 侧完成，本 handler 直接消费
-        AgentConfigPayload 与 AbilityDefinitionPayload 列表。
+        manifest_ref 路径：CoreUnit 内解析 manifest 并直接构造 Ability
+        （对齐独立库 ``examples/agents_manifest/runner`` 范式，不经 wire
+        DTO 往返）；无 manifest_ref 时消费 Observer 直传的
+        ``AbilityDefinitionPayload`` 列表（真跨 WS 路径，wire DTO 合理存在）。
         """
+        from ghrah.manifest.materialize import instantiate_resolved_abilities
+        from ghrah.manifest.resolver import ManifestResolver
+
         supervisor = self._require_supervisor()
         sp = SpawnAgentPayload.model_validate(payload)
         logger.info(f"CoreUnit.spawn_agent: name={sp.config.name}")
 
+        # ── manifest_ref 路径：CoreUnit 内解析 + 直接构造 Ability（不经 wire DTO） ──
+        if sp.manifest_ref:
+            if self._config.manifest_store is None:
+                return self._err("manifest_store not available (standalone)")
+            try:
+                manifest = self._config.manifest_store.load_agent(sp.manifest_ref)
+                resolved = ManifestResolver(self._config.manifest_store).resolve(
+                    manifest, runtime_name=sp.config.name or None
+                )
+            except Exception as e:
+                logger.exception("CoreUnit.spawn_agent: manifest resolve failed: %s", e)
+                return self._err(f"manifest resolve failed for '{sp.manifest_ref}': {e}")
+            ability_instances: list[AbilityProtocol] | None = instantiate_resolved_abilities(
+                resolved.abilities,
+                workspace_root=self._config.workspace_root,
+                auto_approve_abilities=self._config.auto_approve_abilities,
+                require_approval_by_default=self._config.require_approval_by_default,
+                command_runner=self._config.command_runner,
+            )
+            try:
+                agent_name = await supervisor.spawn_agent(
+                    resolved.config,
+                    abilities=ability_instances,
+                    persistence_factory=self._config.persistence_factory,
+                )
+            except RegistryError as e:
+                return self._err(str(e))
+            self._apply_hitl_timeout(agent_name)
+            self._emit_event(
+                EventType.AGENT_SPAWNED.value,
+                {"name": agent_name, "config": _agent_config_to_wire(resolved.config)},
+            )
+            return self._ok({"name": agent_name})
+
+        # ── 直传 abilities 路径（无 manifest_ref，Observer 直传 wire DTO） ──
         core_config = AgentConfig(
             name=sp.config.name,
             agent_config_name=sp.config.agent_config_name,
