@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,8 +103,8 @@ def is_subpath(path: str | Path, parent: str | Path) -> bool:
     Returns:
         True 如果 path 是 parent 或 parent 的子路径
     """
-    path_resolved = Path(path).resolve()
-    parent_resolved = Path(parent).resolve()
+    path_resolved = Path(os.path.normcase(Path(path).resolve()))
+    parent_resolved = Path(os.path.normcase(Path(parent).resolve()))
     if parent_resolved == path_resolved:
         return True
     return path_resolved.is_relative_to(parent_resolved)
@@ -154,16 +155,15 @@ def _expand(raw: str, template_vars: Mapping[str, str]) -> str:
 def resolve_relative_path(workspace: str, value: str) -> str:
     """统一相对路径解析入口：相对路径（含 ``.``）解析到 workspace 根，绝不泄漏 $PWD。
 
-    - 绝对路径（以 ``/`` 开头）原样返回（裁决归 Foxtrail/sandbox cwd 限制）；
+    - 绝对路径（``os.path.isabs`` 判定，含 POSIX ``/`` 与 Windows 盘符/UNC）
+      原样返回（裁决归 Foxtrail/sandbox cwd 限制）；
     - ``"."`` → workspace 根（避免 os.path.join(ws, ".") 产生 ws/. 残留）；
     - 其他相对路径 → ``os.path.join(workspace, value)``。
 
     供 Subject AbilityRunner._resolve_paths 与 ghrah-core FS 能力共享路径解析归一，
     使相对路径永不解析到进程 $PWD。
     """
-    import os
-
-    if value.startswith("/"):
+    if os.path.isabs(value):
         return value
     if value == ".":
         return workspace
