@@ -147,8 +147,50 @@ class SupervisorActor:
             actor_handle=actor_handle,
         )
 
+        # 持久化生命周期（对齐聚合裁决 D-C「Core 链真相源」）：
+        # 注入 backend 的 agent spawn 即 connect + 首次 persist（建表 +
+        # agent 行落库），terminate/shutdown 对称 flush + close。
+        await self._prepare_agent_persistence(actor_handle, config.name)
+
         logger.info(f"Supervisor spawned agent: {config.name}")
         return config.name
+
+    async def _prepare_agent_persistence(self, actor_handle: Any, name: str) -> None:
+        """spawn 后激活 agent 的持久化后端（best-effort，失败不阻断 spawn）。
+
+        - duck-typed connect：仅 SqliteBackend 等带连接语义的后端需要
+          （InMemory/JsonFile 无此方法则跳过）；
+        - 首次 persist：惰性建表 + agents 行落库（空链也写 chain_meta/
+          messages，保证 spawn 即可从 db 恢复 agent 名册）。
+        """
+        cm = getattr(actor_handle, "_context_manager", None)
+        backend = getattr(cm, "persistence", None) if cm is not None else None
+        if cm is None or backend is None:
+            return
+        try:
+            if hasattr(backend, "connect"):
+                await backend.connect()
+            await cm.persist()
+        except Exception:
+            logger.exception(
+                "Supervisor: 初始持久化 agent '%s' 失败（agent 以内存态继续运行）",
+                name,
+            )
+
+    async def _release_agent_persistence(self, actor_handle: Any, name: str) -> None:
+        """terminate 前 flush 后台持久化任务并关闭写侧连接（best-effort）。"""
+        cm = getattr(actor_handle, "_context_manager", None)
+        backend = getattr(cm, "persistence", None) if cm is not None else None
+        if cm is not None:
+            try:
+                await cm.wait_for_persist()
+            except Exception:
+                logger.warning(f"Supervisor: flush agent '{name}' persist tasks 失败")
+        if backend is not None and hasattr(backend, "close"):
+            try:
+                await backend.close()
+            except Exception:
+                logger.warning(f"Supervisor: close agent '{name}' persistence 失败")
 
     async def terminate_agent(self, name: str) -> None:
         """注销并终止 Agent。
@@ -161,7 +203,8 @@ class SupervisorActor:
         Raises:
             AgentNotFoundError: 如果 Agent 未注册
         """
-        self._registry.get_info(name)
+        info = self._registry.get_info(name)
+        await self._release_agent_persistence(info.actor_handle, name)
 
         self._registry.unregister(name)
 

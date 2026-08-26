@@ -84,6 +84,11 @@ def _build_context_manager(
 
     ``persistence_factory`` 为 per-agent 注入点：传入时以工厂构造持久化后端
     （替代默认 ``create_persistence``）；None 时维持默认行为。
+
+    auto_persist 默认值（per-agent 注入语义）：``persistence_factory`` 注入
+    即表达持久化意图（Subject 生产路径），无 context_config 显式声明时
+    默认开启；未注入且无 context_config 时维持 False（standalone 测试
+    行为不变）。context_config 提供时以其 auto_persist 为准。
     """
     from ghrah.chat.factory import ChatMessageFactory
 
@@ -111,7 +116,11 @@ def _build_context_manager(
         window_manager=window_manager,
         persistence=persistence,
         snapshot_interval=context_config.snapshot_interval if context_config else 5,
-        auto_persist=context_config.auto_persist if context_config else False,
+        auto_persist=(
+            context_config.auto_persist
+            if context_config is not None
+            else persistence_factory is not None
+        ),
         message_factory=message_factory,
     )
 

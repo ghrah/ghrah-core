@@ -205,6 +205,8 @@ class SqliteBackend(PersistenceBackend):
         self._db.row_factory = aiosqlite.Row
         # 启用 WAL 模式，支持并发读写
         await self._db.execute("PRAGMA journal_mode=WAL")
+        # 多 agent 各持独立连接写同一 db：WAL 单写者下并发写等待而非立即 SQLITE_BUSY
+        await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.execute("PRAGMA foreign_keys=ON")
         logger.debug("SQLite database connected: %s", self._db_path)
 
