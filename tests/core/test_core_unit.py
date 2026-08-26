@@ -134,7 +134,7 @@ class TestMetaContract:
         meta = unit.meta
         assert meta.name == "core"
         assert meta.requires == frozenset()
-        assert {key.name for key in meta.provides} == {"supervisor", "core_registry"}
+        assert meta.provides == frozenset()
         assert meta.routes.long_running_commands == frozenset()
         assert meta.routes.events == frozenset()
 
@@ -164,18 +164,14 @@ class TestMetaContract:
 
 
 # ----------------------------------------------------------------
-# b. init 服务注册
+# b. init 初始化
 # ----------------------------------------------------------------
 
 
 class TestInit:
-    async def test_init_provides_services(self, unit: CoreUnit, ctx: FakeCtx) -> None:
-        supervisor = ctx.get("supervisor")
-        registry = ctx.get("core_registry")
-        assert supervisor is not None
-        assert supervisor is unit.supervisor
-        assert registry is not None
-        assert registry is supervisor._registry
+    async def test_init_holds_supervisor(self, unit: CoreUnit, ctx: FakeCtx) -> None:
+        assert unit.supervisor is not None
+        assert unit.supervisor._registry is not None
 
 
 # ----------------------------------------------------------------
@@ -497,18 +493,14 @@ class TestStandalone:
         """ctx 无 emit 方法时退化为 Null 行为，不抛异常。"""
 
         class NoEmitCtx:
-            def __init__(self) -> None:
-                self.services: dict[str, Any] = {}
-
-            def provide(self, name: str, value: Any) -> None:
-                self.services[name] = value
+            pass
 
         no_emit_ctx = NoEmitCtx()
         unit = create_core_unit(CoreUnitConfig())
         await unit.init(no_emit_ctx)
         result = await unit.handle_command("spawn_agent", _spawn_payload("agent-1"), None)
         assert result["success"] is True
-        assert "supervisor" in no_emit_ctx.services
+        assert unit.supervisor is not None
         await unit.stop()
 
 

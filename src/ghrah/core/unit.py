@@ -18,7 +18,9 @@ ghrah-core 正从「独立 WS 服务器进程」重构为「可挂载的 Unit �
 - 事件：``await unit.handle_event(event_type, payload)``（core unit 不消费事件）
 
 ctx 视为 duck-typed ``Any``，仅用到 ``ctx.emit(name, payload)``
-（fire-and-forget）与 ``ctx.provide(name, value)``。
+（fire-and-forget）。Supervisor 等内部状态由实例自持，**不向宿主
+provide**——Ouroboros 同名服务全局唯一（无 isolate 时），每实例状态
+注册为全局服务会导致多集群（多 CoreUnit 实例）挂载冲突。
 
 事件命名约定：core 域事件经 ``ctx.emit(f"core:{event_type}", payload_dict)``
 发送，``core:`` 前缀防止与 subject/observer 域事件冲突。
@@ -429,7 +431,7 @@ class CoreUnit:
         self._meta = _UnitMeta(
             name="core",
             requires=frozenset(),
-            provides=frozenset({_ServiceKey("supervisor"), _ServiceKey("core_registry")}),
+            provides=frozenset(),
             routes=_RouteSpec(commands=_COMMANDS),
         )
         self._supervisor: SupervisorActor | None = None
@@ -472,10 +474,10 @@ class CoreUnit:
     # ----------------------------------------------------------------
 
     async def init(self, ctx: Any) -> None:
-        """初始化 Unit：构造 Supervisor 并向宿主提供核心服务。
+        """初始化 Unit：构造 Supervisor（实例自持，不向宿主注册服务）。
 
         Args:
-            ctx: 宿主上下文（duck-typed），用到 ``ctx.emit`` 与 ``ctx.provide``
+            ctx: 宿主上下文（duck-typed），用到 ``ctx.emit``
         """
         emit = getattr(ctx, "emit", None)
         self._emit = emit if callable(emit) else None
@@ -495,13 +497,6 @@ class CoreUnit:
             room_bridge=room_bridge,
         )
         self._supervisor = supervisor
-
-        provide = getattr(ctx, "provide", None)
-        if callable(provide):
-            provide("supervisor", supervisor)
-            provide("core_registry", getattr(supervisor, "_registry", None))
-        else:
-            logger.warning("CoreUnit.init: ctx 无 provide 方法，跳过服务注册")
 
         logger.info(f"CoreUnit initialized (cluster_id={self._config.cluster_id})")
 
