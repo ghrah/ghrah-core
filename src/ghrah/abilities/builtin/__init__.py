@@ -21,6 +21,7 @@
 - BroadcastMessageAbility: 向所有 Agent 广播消息
 - SpawnAgentAbility: 动态创建 Agent
 - TerminateAgentAbility: 终止集群中的 Agent
+- SendAbility: 向 room 发消息（send 工具：成员展开 + Supervisor 投递 + RoomLog 落账）
 
 权限模块：
 - FSPermissionChecker: 文件系统路径权限检查器
@@ -56,6 +57,7 @@ from ghrah.abilities.builtin.list_directory import ListDirectoryAbility
 from ghrah.abilities.builtin.move_file import MoveFileAbility
 from ghrah.abilities.builtin.query_agents import QueryAgentsAbility
 from ghrah.abilities.builtin.read_file import ReadFileAbility
+from ghrah.abilities.builtin.send import SendAbility
 from ghrah.abilities.builtin.send_message import SendMessageAbility
 from ghrah.abilities.builtin.spawn_agent import SpawnAgentAbility
 from ghrah.abilities.builtin.terminate_agent import TerminateAgentAbility
@@ -81,6 +83,7 @@ __all__ = [
     "BroadcastMessageAbility",
     "SpawnAgentAbility",
     "TerminateAgentAbility",
+    "SendAbility",
     # 文件系统权限模块
     "FSPermissionChecker",
     "AccessApprovalHook",

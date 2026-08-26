@@ -64,9 +64,12 @@ class SupervisorActor:
         default_timeout: float = 300.0,
         cluster_id: str | None = None,
         event_publisher: EventPublisher | None = None,
+        room_bridge: Any | None = None,
     ) -> None:
         self._event_publisher = event_publisher
         self._cluster_id = cluster_id
+        # RoomBridgeProtocol | None（send 工具用；duck-typed，避免反向依赖）
+        self.room_bridge = room_bridge
         self._registry = AgentRegistry()
         self._router = MessageRouter(self._registry, default_timeout=default_timeout)
         logger.info(

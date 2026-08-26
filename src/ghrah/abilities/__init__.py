@@ -61,6 +61,7 @@ from ghrah.abilities.builtin.list_directory import ListDirectoryAbility
 from ghrah.abilities.builtin.move_file import MoveFileAbility
 from ghrah.abilities.builtin.query_agents import QueryAgentsAbility
 from ghrah.abilities.builtin.read_file import ReadFileAbility
+from ghrah.abilities.builtin.send import SendAbility
 from ghrah.abilities.builtin.send_message import SendMessageAbility
 from ghrah.abilities.builtin.spawn_agent import SpawnAgentAbility
 from ghrah.abilities.builtin.terminate_agent import TerminateAgentAbility
@@ -123,6 +124,7 @@ CLUSTER_ABILITY_TYPES: frozenset[str] = frozenset(
         "broadcast_message",
         "spawn_agent",
         "terminate_agent",
+        "send",
     }
 )
 """集群通信类 Ability 的 handler 类型集合（单一真源）。"""
@@ -148,6 +150,7 @@ def _register_builtin_abilities() -> None:
     AbilityRegistry.register("broadcast_message", BroadcastMessageAbility)
     AbilityRegistry.register("spawn_agent", SpawnAgentAbility)
     AbilityRegistry.register("terminate_agent", TerminateAgentAbility)
+    AbilityRegistry.register("send", SendAbility)
 
 
 # 模块加载时自动注册内置 Ability
@@ -207,6 +210,7 @@ __all__ = [
     "BroadcastMessageAbility",
     "SpawnAgentAbility",
     "TerminateAgentAbility",
+    "SendAbility",
     # 文件系统权限模块
     "FSPermissionChecker",
     "AccessApprovalHook",

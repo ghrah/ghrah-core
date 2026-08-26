@@ -53,6 +53,7 @@ from ghrah.core.events import (
     SessionDeletedEvent,
     SessionSwitchedEvent,
 )
+from ghrah.core.room_protocol import SerialRoomBridge
 from ghrah.protocol.types import (
     AbilityResultPayload,
     BroadcastMessagePayload,
@@ -455,10 +456,18 @@ class CoreUnit:
         self._emit = emit if callable(emit) else None
         self._publisher = UnitEventPublisher(emit=self._emit)
 
+        # Room bridge（send 工具回路）：宿主 ctx 有 serial 时桥接 Subject RoomUnit
+        # （duck-typed；standalone 场景无 serial → bridge 为 None，send 工具明确报错）
+        serial = getattr(ctx, "serial", None)
+        room_bridge = (
+            SerialRoomBridge(serial) if callable(serial) else None
+        )
+
         supervisor = SupervisorActor(
             default_timeout=self._config.default_timeout,
             cluster_id=self._config.cluster_id,
             event_publisher=self._publisher,
+            room_bridge=room_bridge,
         )
         self._supervisor = supervisor
 
@@ -787,6 +796,7 @@ class CoreUnit:
                 current_ability_name=ep.ability_name,
                 tool_args=ep.tool_args,
                 context_manager=getattr(agent_handle, "_context_manager", None),
+                supervisor=supervisor,
                 agent_name=ep.agent_name,
             )
             action_result = await executor.execute_ability(ability, context)
