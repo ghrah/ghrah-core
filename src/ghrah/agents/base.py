@@ -77,6 +77,13 @@ from ghrah.types.results import ActionOutcome, ActionResult
 
 logger = logging.getLogger(__name__)
 
+_VISIBLE_RESPONSE_RETRY_PROMPT = (
+    "The previous generation ended without user-visible text or a tool call. "
+    "Answer the user's request now and put the final answer in the normal response "
+    "content. Do not return only reasoning content."
+)
+_EMPTY_VISIBLE_RESPONSE = "模型未返回可展示的正文，请重试。"
+
 
 class ActorAgent:
     """基于 Ability 组合的 Agent Actor。
@@ -638,6 +645,30 @@ class ActorAgent:
         # 2. 调用 LLM
         messages = await cm.get_llm_messages()
         llm_response: LLMResponseProtocol = await llm.generate(messages)
+        llm_responses: list[LLMResponseProtocol] = [llm_response]
+
+        # 某些 thinking 模型偶发以 finish_reason=stop 结束，但只返回
+        # reasoning_content，没有正文或 tool call。reasoning 不能直接投影给用户，
+        # 因此用仅对本次请求生效的协议提示安全补全一次；首次空响应不写入消息
+        # 历史，避免形成无法展示的幽灵 AI 消息。
+        if not llm_response.tool_calls and not llm_response.text.strip():
+            logger.warning(
+                "ActorAgent[%s]: LLM returned no visible content; retrying once",
+                self.config.name,
+            )
+            retry_messages = list(messages)
+            insert_at = 0
+            while insert_at < len(retry_messages) and retry_messages[insert_at].role == "system":
+                insert_at += 1
+            retry_messages.insert(
+                insert_at,
+                ChatMessage.system(
+                    _VISIBLE_RESPONSE_RETRY_PROMPT,
+                    source="system:runtime",
+                ),
+            )
+            llm_response = await llm.generate(retry_messages)
+            llm_responses.append(llm_response)
 
         # 2.5 提取 LLM 响应 metadata
         from ghrah.chat.response import (
@@ -646,7 +677,7 @@ class ActorAgent:
             extract_token_usage,
         )
 
-        token_usage = extract_token_usage(llm_response)
+        token_usages = [extract_token_usage(response) for response in llm_responses]
         cot_content = extract_reasoning_content(llm_response)
         resp_meta = extract_response_metadata(llm_response)
 
@@ -656,10 +687,17 @@ class ActorAgent:
 
         # 构建 llm_metadata dict，供 commit_iteration 使用
         llm_meta: dict[str, Any] = {}
-        if token_usage:
-            llm_meta["token_usage"] = token_usage.to_dict()
+        used = [usage for usage in token_usages if usage is not None]
+        if used:
+            llm_meta["token_usage"] = {
+                "input_tokens": sum(usage.input_tokens for usage in used),
+                "output_tokens": sum(usage.output_tokens for usage in used),
+                "total_tokens": sum(usage.total_tokens for usage in used),
+            }
         if resp_meta:
             llm_meta["response_metadata"] = resp_meta
+        if len(llm_responses) > 1:
+            llm_meta["visible_response_retry_count"] = len(llm_responses) - 1
 
         # 3. 将 AI 响应添加到消息历史
         cm.add_messages([llm_response.to_chat_message(source=f"agent:{self.config.name}")])
@@ -674,6 +712,10 @@ class ActorAgent:
         # 5. 解析 LLM 响应
         tool_calls = llm_response.tool_calls
         response_content = llm_response.text or ""
+        if not tool_calls and not response_content.strip():
+            # 两次调用都没有正文时返回明确、无思考泄露的可展示结果，保证
+            # ConversationAbility 与 RoomFilter 不会把该轮误记为空成功。
+            response_content = _EMPTY_VISIBLE_RESPONSE
 
         results: list[dict] = []
 

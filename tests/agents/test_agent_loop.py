@@ -23,7 +23,7 @@ from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.errors import AbilityNotFoundError
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
-from ghrah.chat.content import TextBlock, ToolCallBlock
+from ghrah.chat.content import ReasoningBlock, TextBlock, ToolCallBlock
 from ghrah.chat.format import LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.core.config import AgentConfig
@@ -745,6 +745,49 @@ class TestReceiveIntegration:
             message.role
             for message in agent._context_manager.message_store.current_messages
         ] == ["user", "ai", "user", "ai"]
+
+    @pytest.mark.asyncio
+    async def test_reasoning_only_response_retries_for_visible_text(self) -> None:
+        """终止响应只有 reasoning 时补全一次，且不把首次空响应写入历史。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(ConversationAbility())
+        agent._llm = AsyncMock()
+        agent._llm.configure_tools = MagicMock()
+        agent._llm.generate.side_effect = [
+            LLMResponse(content_blocks=[ReasoningBlock(reasoning="内部思考")]),
+            LLMResponse(content_blocks=[TextBlock(text="下午好呀。")]),
+        ]
+
+        reply = await agent.receive(_make_message("下午好"))
+
+        assert reply.content == "下午好呀。"
+        assert agent._llm.generate.await_count == 2
+        messages = agent._context_manager.message_store.current_messages
+        assert [message.role for message in messages] == ["user", "ai"]
+        assert messages[-1].text == "下午好呀。"
+        retry_messages = agent._llm.generate.await_args_list[1].args[0]
+        assert any(message.source == "system:runtime" for message in retry_messages)
+
+    @pytest.mark.asyncio
+    async def test_reasoning_only_retry_uses_safe_visible_fallback(self) -> None:
+        """补全仍无正文时给出安全提示，不能把 reasoning 当用户回复。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(ConversationAbility())
+        agent._llm = AsyncMock()
+        agent._llm.configure_tools = MagicMock()
+        agent._llm.generate.side_effect = [
+            LLMResponse(content_blocks=[ReasoningBlock(reasoning="隐私思考一")]),
+            LLMResponse(content_blocks=[ReasoningBlock(reasoning="隐私思考二")]),
+        ]
+
+        reply = await agent.receive(_make_message("下午好"))
+
+        assert reply.content == "模型未返回可展示的正文，请重试。"
+        assert "隐私思考" not in reply.content
 
     @pytest.mark.asyncio
     async def test_receive_does_not_republish_previous_chain_head(self) -> None:
