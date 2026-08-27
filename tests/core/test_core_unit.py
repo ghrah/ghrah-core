@@ -11,6 +11,7 @@ mount_unit 桥契约中 ctx 的 emit/provide/get/on/serial 形状。
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -123,6 +124,16 @@ def _spawn_payload(name: str) -> dict[str, Any]:
     return {"config": {"name": name, "system_prompt": "You are a test agent."}}
 
 
+def _spawn_payload_with_id(name: str, agent_id: str) -> dict[str, Any]:
+    return {
+        "config": {
+            "name": name,
+            "agent_id": agent_id,
+            "system_prompt": "You are a test agent.",
+        }
+    }
+
+
 # ----------------------------------------------------------------
 # a. meta 形状契约
 # ----------------------------------------------------------------
@@ -201,7 +212,10 @@ class TestSpawnTerminate:
         await unit.handle_command("spawn_agent", _spawn_payload("agent-1"), None)
         result = await unit.handle_command("terminate_agent", {"name": "agent-1"}, None)
         assert result["success"] is True
-        assert result["data"] == {"name": "agent-1", "terminated": True}
+        assert result["data"]["name"] == "agent-1"
+        assert result["data"]["agent_id"] == "agent-1"
+        assert result["data"]["incarnation_id"]
+        assert result["data"]["terminated"] is True
         assert f"core:{EventType.AGENT_TERMINATED.value}" in ctx.event_names()
 
         assert unit.supervisor is not None
@@ -529,6 +543,9 @@ class FakePersistenceBackend:
     def __init__(self, tag: str) -> None:
         self.tag = tag
         self.saved: list[Any] = []
+        self.meta: dict[str, tuple[dict[str, str], str, dict[str, Any]]] = {}
+        self.messages: dict[str, list[Any]] = {}
+        self.sessions: dict[str, Any] = {}
 
     async def connect(self) -> None:
         return None
@@ -543,7 +560,35 @@ class FakePersistenceBackend:
         return []
 
     async def load_chain_meta(self, agent_name: str) -> Any:
-        return None
+        return self.meta.get(agent_name)
+
+    async def delete_chain(self, agent_name: str) -> None:
+        self.saved = [node for node in self.saved if node.agent_name != agent_name]
+        self.meta.pop(agent_name, None)
+        self.messages.pop(agent_name, None)
+        self.sessions = {
+            sid: session
+            for sid, session in self.sessions.items()
+            if session.agent_name != agent_name
+        }
+
+    async def save_session(self, session: Any) -> None:
+        self.sessions[session.session_id] = session
+
+    async def list_sessions(self, agent_name: str) -> list[Any]:
+        return [s for s in self.sessions.values() if s.agent_name == agent_name]
+
+    async def save_chain_meta(
+        self,
+        agent_name: str,
+        branches: dict[str, str],
+        current_state: dict[str, Any],
+        active_session_id: str = "",
+    ) -> None:
+        self.meta[agent_name] = (dict(branches), active_session_id, dict(current_state))
+
+    async def save_messages(self, agent_name: str, messages: list[Any]) -> None:
+        self.messages[agent_name] = list(messages)
 
 
 def _ability_def(ability_type: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -765,3 +810,116 @@ class TestForkContextContinuity:
         checker_loose = unit_loose._config.require_approval_by_default
         checker_strict = unit_strict._config.require_approval_by_default
         assert checker_loose is False and checker_strict is True
+
+
+async def test_multi_agent_core_restart_restores_independent_snapshots(
+    tmp_path: Path,
+) -> None:
+    """整颗 CoreUnit 重建后，多个待命 Agent 各自恢复原链头与状态。"""
+    from ghrah.context.persistence.sqlite_backend import SqliteBackend
+
+    db_path = tmp_path / "multi-agent-action.db"
+
+    def persistence_factory(config: AgentConfig) -> SqliteBackend:
+        return SqliteBackend(db_path=db_path, run_id=f"run-{config.effective_agent_id}")
+
+    config = CoreUnitConfig(
+        cluster_id="cluster-a",
+        persistence_factory=persistence_factory,
+    )
+    first = create_core_unit(config)
+    await first.init(FakeCtx())
+
+    identities = {"planner": "1" * 32, "reviewer": "2" * 32}
+    heads: dict[str, str] = {}
+    for name, agent_id in identities.items():
+        result = await first.handle_command(
+            "spawn_agent", _spawn_payload_with_id(name, agent_id), None
+        )
+        assert result["success"] is True
+        assert result["data"]["agent_id"] == agent_id
+        assert result["data"]["recovery_mode"] == "initialized"
+        cm = _actor_of(first, name)._context_manager
+        cm.begin_iteration()
+        cm.apply_state_changes({"waiting_at": name})
+        node = cm.commit_iteration(ability_names=["conversation"])
+        heads[name] = node.id
+
+    await first.stop()
+
+    restarted = create_core_unit(config)
+    await restarted.init(FakeCtx())
+    for name, agent_id in identities.items():
+        result = await restarted.handle_command(
+            "spawn_agent", _spawn_payload_with_id(name, agent_id), None
+        )
+        assert result["success"] is True
+        assert result["data"]["name"] == name
+        assert result["data"]["agent_id"] == agent_id
+        assert result["data"]["recovery_mode"] == "restored"
+        assert result["data"]["incarnation_id"]
+        cm = _actor_of(restarted, name)._context_manager
+        assert cm.chain.active_head is not None
+        assert cm.chain.active_head.id == heads[name]
+        assert cm.get_current_state() == {"waiting_at": name}
+
+    listed = await restarted.handle_command("list_agents", {}, None)
+    assert {item["agent_id"] for item in listed["data"]["agents"]} == set(
+        identities.values()
+    )
+    await restarted.stop()
+
+
+async def test_same_name_agents_in_different_clusters_use_uuid_snapshot_keys(
+    tmp_path: Path,
+) -> None:
+    """共享 Project action DB 时，同名 Agent 也按 UUID 隔离快照。"""
+    from ghrah.context.persistence.sqlite_backend import SqliteBackend
+
+    db_path = tmp_path / "shared-project-action.db"
+
+    def persistence_factory(config: AgentConfig) -> SqliteBackend:
+        return SqliteBackend(db_path=db_path, run_id=f"run-{config.effective_agent_id}")
+
+    identities = {"cluster-a": "a" * 32, "cluster-b": "b" * 32}
+    first_units: list[CoreUnit] = []
+    heads: dict[str, str] = {}
+    for cluster_id, agent_id in identities.items():
+        unit = create_core_unit(
+            CoreUnitConfig(
+                cluster_id=cluster_id,
+                persistence_factory=persistence_factory,
+            )
+        )
+        await unit.init(FakeCtx())
+        result = await unit.handle_command(
+            "spawn_agent", _spawn_payload_with_id("planner", agent_id), None
+        )
+        assert result["data"]["recovery_mode"] == "initialized"
+        cm = _actor_of(unit, "planner")._context_manager
+        assert cm.agent_name == agent_id
+        cm.begin_iteration()
+        cm.apply_state_changes({"cluster": cluster_id})
+        heads[agent_id] = cm.commit_iteration(ability_names=[]).id
+        first_units.append(unit)
+
+    for unit in first_units:
+        await unit.stop()
+
+    for cluster_id, agent_id in identities.items():
+        unit = create_core_unit(
+            CoreUnitConfig(
+                cluster_id=cluster_id,
+                persistence_factory=persistence_factory,
+            )
+        )
+        await unit.init(FakeCtx())
+        result = await unit.handle_command(
+            "spawn_agent", _spawn_payload_with_id("planner", agent_id), None
+        )
+        assert result["data"]["recovery_mode"] == "restored"
+        cm = _actor_of(unit, "planner")._context_manager
+        assert cm.chain.active_head is not None
+        assert cm.chain.active_head.id == heads[agent_id]
+        assert cm.get_current_state() == {"cluster": cluster_id}
+        await unit.stop()

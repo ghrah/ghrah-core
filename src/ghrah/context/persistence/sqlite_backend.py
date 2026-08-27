@@ -478,6 +478,90 @@ class SqliteBackend(PersistenceBackend):
         await db.execute("DELETE FROM agents WHERE agent_name = ?", (agent_name,))
         await db.commit()
 
+    async def replace_snapshot(
+        self,
+        *,
+        agent_name: str,
+        nodes: list[ContextNode],
+        sessions: list[Session],
+        branches: dict[str, str],
+        current_state: dict[str, Any],
+        active_session_id: str,
+        messages: list[Any],
+    ) -> None:
+        """在一个 SQLite 事务中完整替换某 Agent 的恢复 checkpoint。"""
+        db = await self._ensure_db()
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await self._ensure_agent(db, agent_name)
+            await db.execute("DELETE FROM messages WHERE agent_name = ?", (agent_name,))
+            await db.execute("DELETE FROM chain_meta WHERE agent_name = ?", (agent_name,))
+            await db.execute("DELETE FROM sessions WHERE agent_name = ?", (agent_name,))
+            await db.execute("DELETE FROM nodes WHERE agent_name = ?", (agent_name,))
+
+            for node in nodes:
+                serialized = serialize_node(node)
+                await db.execute(
+                    f"""
+                    INSERT INTO nodes ({_NODE_COLUMNS})
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    self._serialize_node_params(serialized),
+                )
+
+            for session in sessions:
+                serialized_session = serialize_session(session)
+                await db.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, agent_name, branch_name,
+                        parent_node_id, parent_session_id,
+                        rebase_from_agent, rebase_from_node_id,
+                        rebase_from_session_id, system_prompt, metadata, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        serialized_session["session_id"],
+                        serialized_session["agent_name"],
+                        serialized_session["branch_name"],
+                        serialized_session["parent_node_id"],
+                        serialized_session["parent_session_id"],
+                        serialized_session["rebase_from_agent"],
+                        serialized_session["rebase_from_node_id"],
+                        serialized_session["rebase_from_session_id"],
+                        serialized_session["system_prompt"],
+                        serialized_session["metadata"],
+                    ),
+                )
+
+            await db.execute(
+                """
+                INSERT INTO chain_meta (
+                    agent_name, branches, active_session_id, current_state, updated_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    agent_name,
+                    json.dumps(branches, ensure_ascii=False),
+                    active_session_id,
+                    json.dumps(current_state, ensure_ascii=False),
+                ),
+            )
+            await db.execute(
+                """
+                INSERT INTO messages (agent_name, messages, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    agent_name,
+                    json.dumps(serialize_messages(messages), ensure_ascii=False),
+                ),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
     async def list_agents(self) -> list[str]:
         """列出所有有持久化数据的 agent 名称。
 

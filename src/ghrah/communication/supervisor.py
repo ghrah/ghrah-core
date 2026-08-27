@@ -141,46 +141,91 @@ class SupervisorActor:
             persistence_factory=persistence_factory,
         )
 
-        self._registry.register(
-            name=config.name,
-            config=config,
-            actor_handle=actor_handle,
-        )
+        # 恢复必须发生在 registry 可见之前。旧实现先注册再无条件 persist，
+        # 会把同名 agent 的历史链删除并以新根节点覆盖。现在先 connect，
+        # 有快照则 restore；仅无快照时初始化。任一步失败均 fail closed。
+        try:
+            recovery_mode = await self._prepare_agent_persistence(
+                actor_handle, config.effective_agent_id
+            )
+        except Exception as exc:
+            await self._close_agent_persistence(actor_handle, config.name)
+            raise RegistryError(
+                f"Agent persistence recovery failed for '{config.name}': {exc}"
+            ) from exc
 
-        # 持久化生命周期（对齐聚合裁决 D-C「Core 链真相源」）：
-        # 注入 backend 的 agent spawn 即 connect + 首次 persist（建表 +
-        # agent 行落库），terminate/shutdown 对称 flush + close。
-        await self._prepare_agent_persistence(actor_handle, config.name)
+        try:
+            self._registry.register(
+                name=config.name,
+                config=config,
+                actor_handle=actor_handle,
+            )
+        except Exception:
+            await self._close_agent_persistence(actor_handle, config.name)
+            raise
+
+        # 供 CoreUnit 回执/事件和恢复报告读取；不参与业务身份。
+        setattr(actor_handle, "_recovery_mode", recovery_mode)
 
         logger.info(f"Supervisor spawned agent: {config.name}")
         return config.name
 
-    async def _prepare_agent_persistence(self, actor_handle: Any, name: str) -> None:
-        """spawn 后激活 agent 的持久化后端（best-effort，失败不阻断 spawn）。
+    async def _prepare_agent_persistence(self, actor_handle: Any, name: str) -> str:
+        """在 agent 注册前恢复或初始化持久化上下文。
 
         - duck-typed connect：仅 SqliteBackend 等带连接语义的后端需要
           （InMemory/JsonFile 无此方法则跳过）；
-        - 首次 persist：惰性建表 + agents 行落库（空链也写 chain_meta/
-          messages，保证 spawn 即可从 db 恢复 agent 名册）。
+        - 已有 chain_meta：restore-first，恢复失败直接阻断 spawn；
+        - 无 chain_meta：首次 persist，初始化根节点与 agent 元数据。
+
+        Returns:
+            ``memory`` / ``restored`` / ``initialized``。
         """
         cm = getattr(actor_handle, "_context_manager", None)
         backend = getattr(cm, "persistence", None) if cm is not None else None
         if cm is None or backend is None:
-            return
-        try:
-            if hasattr(backend, "connect"):
-                await backend.connect()
-            await cm.persist()
-        except Exception:
-            logger.exception(
-                "Supervisor: 初始持久化 agent '%s' 失败（agent 以内存态继续运行）",
-                name,
-            )
+            return "memory"
+        if hasattr(backend, "connect"):
+            await backend.connect()
+        meta = await backend.load_chain_meta(name)
+        if meta is not None:
+            await cm.restore(name)
+            logger.info("Supervisor restored persisted context for agent: %s", name)
+            return "restored"
+        await cm.persist()
+        logger.info("Supervisor initialized persisted context for agent: %s", name)
+        return "initialized"
 
-    async def _release_agent_persistence(self, actor_handle: Any, name: str) -> None:
-        """terminate 前 flush 后台持久化任务并关闭写侧连接（best-effort）。"""
+    async def _close_agent_persistence(self, actor_handle: Any, name: str) -> None:
+        """仅关闭 backend，不写入；用于 spawn/restore 失败清理半成品。"""
         cm = getattr(actor_handle, "_context_manager", None)
         backend = getattr(cm, "persistence", None) if cm is not None else None
+        if backend is not None and hasattr(backend, "close"):
+            try:
+                await backend.close()
+            except Exception:
+                logger.warning("Supervisor: close failed agent '%s' backend 失败", name)
+
+    def recovery_mode(self, name: str) -> str:
+        """返回当前运行实例的恢复方式。"""
+        info = self._registry.get_info(name)
+        return str(getattr(info.actor_handle, "_recovery_mode", "memory"))
+
+    def incarnation_id(self, name: str) -> str:
+        """返回本次成功注册生成的运行实例 ID。"""
+        return self._registry.get_info(name).incarnation_id
+
+    async def _release_agent_persistence(self, actor_handle: Any, name: str) -> None:
+        """terminate 前写最终 checkpoint、flush 并关闭写侧连接。"""
+        cm = getattr(actor_handle, "_context_manager", None)
+        backend = getattr(cm, "persistence", None) if cm is not None else None
+        if cm is not None and backend is not None:
+            try:
+                # 完整 persist 同步 chain_meta/state/messages/sessions；仅等待
+                # auto-persist node 无法形成可恢复 checkpoint。
+                await cm.persist()
+            except Exception:
+                logger.exception("Supervisor: final checkpoint agent '%s' 失败", name)
         if cm is not None:
             try:
                 await cm.wait_for_persist()
@@ -219,7 +264,9 @@ class SupervisorActor:
         agents = self._registry.list_agents()
         return [info.to_dict() for info in agents]
 
-    async def route_message(self, message: AgentMessage, timeout: float | None = None) -> AgentMessage:
+    async def route_message(
+        self, message: AgentMessage, timeout: float | None = None
+    ) -> AgentMessage:
         """路由消息到目标 Agent。
 
         超时优先级：
@@ -327,7 +374,13 @@ class SupervisorActor:
         responses = await self._router.broadcast(message)
         return [{"responder": r.sender, "content": r.content} for r in responses]
 
-    async def delegate(self, from_agent: str, to_agent: str, content: str, timeout: float | None = None) -> str:
+    async def delegate(
+        self,
+        from_agent: str,
+        to_agent: str,
+        content: str,
+        timeout: float | None = None,
+    ) -> str:
         """Agent 间委托：从一个 Agent 委托任务到另一个 Agent。
 
         超时优先级：

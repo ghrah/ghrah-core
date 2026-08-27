@@ -89,7 +89,8 @@ class AgentConfig:
     不再通过 agent_type 隐式关联默认 Ability。
 
     Attributes:
-        name: Agent 运行时唯一名称（用于 Actor 注册、消息路由、持久化路径）
+        agent_id: durable Agent 的稳定标识；空值时兼容回退到 name。
+        name: CoreUnit 内运行时唯一显示名（用于 Actor 注册、消息路由）
         agent_config_name: agentconf 中的配置名称，None 时回退到 name（向后兼容）
         description: Agent 能力描述（用于 Agent 发现和路由）
         system_prompt: 系统提示词
@@ -103,6 +104,7 @@ class AgentConfig:
     """
 
     name: str
+    agent_id: str = ""
     agent_config_name: str | None = None
     description: str = ""
     system_prompt: str = ""
@@ -122,3 +124,7 @@ class AgentConfig:
         """
         return self.agent_config_name or self.name
 
+    @property
+    def effective_agent_id(self) -> str:
+        """稳定 Agent ID；旧调用方未提供时兼容回退到 name。"""
+        return self.agent_id or self.name

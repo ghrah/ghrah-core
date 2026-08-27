@@ -104,13 +104,15 @@ def _build_context_manager(
     elif context_config is not None:
         persistence = create_persistence(
             context_config,
-            agent_name=config.name,
+            agent_name=config.effective_agent_id,
         )
 
     message_factory = ChatMessageFactory()
 
     return ContextManager(
-        agent_name=config.name,
+        # name 是 cluster 内可读地址；action-chain 必须按稳定 UUID 分区，
+        # 否则同一 Project 的不同 cluster 中同名 agent 会覆盖彼此快照。
+        agent_name=config.effective_agent_id,
         initial_state={},
         system_prompt=config.system_prompt,
         window_manager=window_manager,

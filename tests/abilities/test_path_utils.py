@@ -9,6 +9,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from ghrah.abilities.paths import extract_paths, is_subpath, resolve_relative_path
 
 
@@ -45,7 +47,11 @@ class TestIsSubpath:
             real_dir = Path(tmpdir) / "real"
             real_dir.mkdir()
             link_dir = Path(tmpdir) / "link"
-            link_dir.symlink_to(real_dir)
+            try:
+                link_dir.symlink_to(real_dir)
+            except OSError as exc:
+                # Windows 非管理员且无开发者模式：WinError 1314 特权不足
+                pytest.skip(f"symlink unavailable: {exc}")
             try:
                 assert is_subpath(str(link_dir / "file.txt"), str(real_dir)) is True
                 assert is_subpath(str(real_dir / "file.txt"), str(link_dir)) is True

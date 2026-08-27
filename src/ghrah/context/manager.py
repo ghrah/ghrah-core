@@ -91,6 +91,7 @@ class ContextManager:
         self._pending_messages: list[Any] = []
         self._in_iteration: bool = False
         self._persist_tasks: set[asyncio.Task[Any]] = set()
+        self._persist_lock = asyncio.Lock()
 
         # Session 管理
         self._sessions: dict[str, Session] = {}
@@ -241,7 +242,8 @@ class ContextManager:
             branch_name=session_name,
             parent_node_id=from_node_id,
             parent_session_id=self._active_session_id,
-            system_prompt=system_prompt or (current_session.system_prompt if current_session else ""),
+            system_prompt=system_prompt
+            or (current_session.system_prompt if current_session else ""),
             metadata=session_metadata or {},
         )
 
@@ -868,48 +870,81 @@ class ContextManager:
 
         # 等待所有后台 auto-persist 任务完成，避免竞态
         await self.wait_for_persist()
+        await self._persist_complete_checkpoint()
 
-        # 原子替换：先清除旧数据
-        await self._persistence.delete_chain(self._agent_name)
+    async def _persist_complete_checkpoint(self) -> None:
+        """写完整 checkpoint；调用方负责避免把当前 task 纳入 wait。"""
+        if self._persistence is None:
+            return
 
-        try:
-            # 1. 保存所有节点
-            for node_id, node in self._chain._nodes.items():
-                await self._persistence.save_node(node)
+        async with self._persist_lock:
+            # 在进入 await 写入前捕获同一代的完整内存视图。
+            nodes = list(self._chain._nodes.values())
+            sessions = list(self._sessions.values())
+            branches = dict(self._chain.branches)
+            current_state = self._state_manager.get_snapshot()
+            active_session_id = self._active_session_id or ""
+            messages = list(self._message_store.current_messages)
 
-            # 2. 保存所有 session
-            for session in self._sessions.values():
-                await self._persistence.save_session(session)
+            # 生产 SQLite/InMemory 后端提供原子 snapshot replace：旧 checkpoint
+            # 只有在所有组成部分写成后才被替换。
+            replace_snapshot = getattr(self._persistence, "replace_snapshot", None)
+            if callable(replace_snapshot):
+                await replace_snapshot(
+                    agent_name=self._agent_name,
+                    nodes=nodes,
+                    sessions=sessions,
+                    branches=branches,
+                    current_state=current_state,
+                    active_session_id=active_session_id,
+                    messages=messages,
+                )
+                logger.debug(
+                    "Atomically persisted context for agent '%s': %d nodes, "
+                    "%d sessions, %d messages",
+                    self._agent_name,
+                    len(nodes),
+                    len(sessions),
+                    len(messages),
+                )
+                return
 
-            # 3. 保存链元信息
-            await self._persistence.save_chain_meta(
-                agent_name=self._agent_name,
-                branches=self._chain.branches,
-                current_state=self._state_manager.get_snapshot(),
-                active_session_id=self._active_session_id or "",
-            )
-
-            # 4. 保存当前完整消息列表
-            await self._persistence.save_messages(
-                agent_name=self._agent_name,
-                messages=self._message_store.current_messages,
-            )
-        except Exception:
-            # 持久化失败，清理残留数据避免不一致
-            logger.exception(
-                "Persist failed for agent '%s', cleaning up partial data",
-                self._agent_name,
-            )
+            # 兼容不支持事务快照的验证型后端。
             await self._persistence.delete_chain(self._agent_name)
-            raise
 
-        logger.debug(
-            "Persisted context for agent '%s': %d nodes, %d sessions, %d messages",
-            self._agent_name,
-            self._chain.node_count,
-            len(self._sessions),
-            self._message_store.count,
-        )
+            try:
+                for node in nodes:
+                    await self._persistence.save_node(node)
+
+                for session in sessions:
+                    await self._persistence.save_session(session)
+
+                await self._persistence.save_chain_meta(
+                    agent_name=self._agent_name,
+                    branches=branches,
+                    current_state=current_state,
+                    active_session_id=active_session_id,
+                )
+
+                await self._persistence.save_messages(
+                    agent_name=self._agent_name,
+                    messages=messages,
+                )
+            except Exception:
+                logger.exception(
+                    "Persist failed for agent '%s', cleaning up partial data",
+                    self._agent_name,
+                )
+                await self._persistence.delete_chain(self._agent_name)
+                raise
+
+            logger.debug(
+                "Persisted context for agent '%s': %d nodes, %d sessions, %d messages",
+                self._agent_name,
+                len(nodes),
+                len(sessions),
+                len(messages),
+            )
 
     async def restore(self, agent_name: str) -> None:
         """从后端恢复状态，重建 chain、state、messages、sessions。
@@ -943,12 +978,70 @@ class ContextManager:
         if not nodes:
             raise ValueError(f"No persisted nodes found for agent '{agent_name}'")
 
+        # 在替换任何内存状态前读取并校验完整 checkpoint。存在 meta 并不等于
+        # 可恢复：branch head、parent/session 引用都必须闭合。
+        sessions = await self._persistence.list_sessions(agent_name)
+        messages = await self._persistence.load_messages(agent_name)
+        node_ids = {node.id for node in nodes}
+        roots = [node for node in nodes if node.parent_id is None]
+        if len(roots) != 1:
+            raise ValueError(
+                f"Invalid checkpoint for agent '{agent_name}': expected one root, "
+                f"found {len(roots)}"
+            )
+        if not branches:
+            raise ValueError(
+                f"Invalid checkpoint for agent '{agent_name}': no branches"
+            )
+        missing_heads = {
+            branch: head_id
+            for branch, head_id in branches.items()
+            if head_id not in node_ids
+        }
+        if missing_heads:
+            raise ValueError(
+                f"Invalid checkpoint for agent '{agent_name}': missing branch heads "
+                f"{missing_heads}"
+            )
+        missing_parents = {
+            node.id: node.parent_id
+            for node in nodes
+            if node.parent_id is not None and node.parent_id not in node_ids
+        }
+        if missing_parents:
+            raise ValueError(
+                f"Invalid checkpoint for agent '{agent_name}': missing parents "
+                f"{missing_parents}"
+            )
+        foreign_nodes = [node.id for node in nodes if node.agent_name != agent_name]
+        if foreign_nodes:
+            raise ValueError(
+                f"Invalid checkpoint for agent '{agent_name}': foreign nodes "
+                f"{foreign_nodes}"
+            )
+        sessions_by_id = {session.session_id: session for session in sessions}
+        if active_session_id and active_session_id not in sessions_by_id:
+            raise ValueError(
+                f"Invalid checkpoint for agent '{agent_name}': active session "
+                f"'{active_session_id}' not found"
+            )
+        invalid_sessions = [
+            session.session_id
+            for session in sessions
+            if session.agent_name != agent_name or session.branch_name not in branches
+        ]
+        if invalid_sessions:
+            raise ValueError(
+                f"Invalid checkpoint for agent '{agent_name}': invalid sessions "
+                f"{invalid_sessions}"
+            )
+
         # 重建 chain
         self._agent_name = agent_name
         self._chain = ActionChain(agent_name)
 
         # 找到根节点（iteration=0 或 parent_id=None）
-        root = next((n for n in nodes if n.parent_id is None), nodes[0])
+        root = roots[0]
         self._chain._nodes[root.id] = root
         self._chain._branches["main"] = root.id
 
@@ -963,10 +1056,9 @@ class ContextManager:
             self._chain._branches[branch_name] = head_id
 
         # 恢复活跃分支
+        self._sessions = sessions_by_id
         if active_session_id:
             # 从 session 映射找到对应的 branch_name
-            sessions = await self._persistence.list_sessions(agent_name)
-            self._sessions = {s.session_id: s for s in sessions}
             active_session = self._sessions.get(active_session_id)
             if active_session:
                 self._chain._active_branch = active_session.branch_name
@@ -980,10 +1072,7 @@ class ContextManager:
         # 3. 恢复 StateManager
         self._state_manager = StateManager(current_state)
 
-        # 4. 恢复 MessageStore
-        messages = await self._persistence.load_messages(agent_name)
-
-        # 尝试从快照节点重建
+        # 4. 恢复 MessageStore；持久化读取已在结构校验前完成。
         snapshot_node = next(
             (n for n in reversed(nodes) if n.is_snapshot and n.messages_snapshot),
             None,
@@ -1076,7 +1165,7 @@ class ContextManager:
                 strategy.set_llm(llm)
 
     def _schedule_persist_node(self, node: ContextNode) -> None:
-        """后台异步保存单个节点（不阻塞主循环）。
+        """后台异步保存包含该节点的完整 checkpoint（不阻塞主循环）。
 
         Args:
             node: 要保存的 ContextNode
@@ -1085,15 +1174,14 @@ class ContextManager:
             return
 
         tasks = self._persist_tasks
-        persist_backend = self._persistence
         agent_name = self._agent_name
 
         async def _do_save() -> None:
             try:
-                await persist_backend.save_node(node)
+                await self._persist_complete_checkpoint()
             except Exception:
                 logger.warning(
-                    "Failed to persist node '%s' for agent '%s'",
+                    "Failed to persist checkpoint at node '%s' for agent '%s'",
                     node.id,
                     agent_name,
                     exc_info=True,

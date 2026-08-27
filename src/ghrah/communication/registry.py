@@ -15,6 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from ghrah.communication.errors import AgentNotFoundError, RegistryError
 from ghrah.types.config_types import AgentConfig
@@ -31,16 +32,20 @@ class AgentInfo:
         config: Agent 框架层配置
         actor_handle: agent actor 引用
         created_at: 注册时间戳
+        incarnation_id: 每次成功注册生成的运行实例 ID。
     """
 
     name: str
     config: AgentConfig
     actor_handle: Any
     created_at: float = field(default_factory=time.time)
+    incarnation_id: str = field(default_factory=lambda: uuid4().hex)
 
     def to_dict(self) -> dict[str, Any]:
         """转换为可序列化的字典。"""
         return {
+            "agent_id": self.config.effective_agent_id,
+            "incarnation_id": self.incarnation_id,
             "name": self.name,
             "config": _agent_config_to_dict(self.config) if self.config else None,
             "description": self.config.description,
@@ -55,6 +60,7 @@ def _agent_config_to_dict(config: AgentConfig) -> dict[str, Any]:
     dataclass，可直接用 dataclasses.asdict 序列化。
     """
     return {
+        "agent_id": config.effective_agent_id,
         "name": config.name,
         "agent_config_name": config.agent_config_name,
         "description": config.description,
@@ -82,6 +88,7 @@ class AgentRegistry:
 
     def __init__(self) -> None:
         self._agents: dict[str, AgentInfo] = {}
+        self._agent_ids: dict[str, str] = {}
 
     def register(
         self,
@@ -101,6 +108,9 @@ class AgentRegistry:
         """
         if name in self._agents:
             raise RegistryError(f"Agent already registered: {name}")
+        agent_id = config.effective_agent_id
+        if agent_id in self._agent_ids:
+            raise RegistryError(f"Agent ID already registered: {agent_id}")
 
         info = AgentInfo(
             name=name,
@@ -108,6 +118,7 @@ class AgentRegistry:
             actor_handle=actor_handle,
         )
         self._agents[name] = info
+        self._agent_ids[agent_id] = name
         logger.info(f"Agent registered: {name}")
 
     def unregister(self, name: str) -> None:
@@ -122,7 +133,8 @@ class AgentRegistry:
         if name not in self._agents:
             raise AgentNotFoundError(name)
 
-        del self._agents[name]
+        info = self._agents.pop(name)
+        self._agent_ids.pop(info.config.effective_agent_id, None)
         logger.info(f"Agent unregistered: {name}")
 
     def get_handle(self, name: str) -> Any:
@@ -158,6 +170,20 @@ class AgentRegistry:
         if info is None:
             raise AgentNotFoundError(name)
         return info
+
+    def get_info_by_id(self, agent_id: str) -> AgentInfo:
+        """按稳定 agent_id 获取注册信息。"""
+        name = self._agent_ids.get(agent_id)
+        if name is None:
+            raise AgentNotFoundError(agent_id)
+        return self.get_info(name)
+
+    def resolve_name(self, agent_id: str) -> str:
+        """把稳定 agent_id 解析为当前 CoreUnit 内的局部名称。"""
+        name = self._agent_ids.get(agent_id)
+        if name is None:
+            raise AgentNotFoundError(agent_id)
+        return name
 
     def list_agents(self) -> list[AgentInfo]:
         """列出所有已注册的 Agent。

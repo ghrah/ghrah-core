@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -89,13 +91,17 @@ class TestExecuteSubprocess:
     @pytest.mark.asyncio
     async def test_command_with_working_dir(self, tmp_path: Any) -> None:
         ability = ExecuteCommandAbility()
+        # POSIX shell 用 pwd；Windows 上 create_subprocess_shell 走 cmd.exe，
+        # 无 pwd，用内建 cd（无参时打印当前目录）。
+        command = "pwd" if os.name == "posix" else "cd"
         context = _make_context(
             current_ability_name="execute_command",
-            tool_args={"command": "pwd", "working_dir": str(tmp_path)},
+            tool_args={"command": command, "working_dir": str(tmp_path)},
         )
         result = await ability.execute(context)
         assert result.outcome == ActionOutcome.SUCCESS
-        assert str(tmp_path) in result.data["stdout"]
+        stdout_dir = Path(result.data["stdout"].strip().splitlines()[-1])
+        assert os.path.normcase(str(stdout_dir)) == os.path.normcase(str(tmp_path))
 
     @pytest.mark.asyncio
     async def test_empty_command_returns_failure(self) -> None:

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ghrah.abilities.context import AbilityExecutionContext
@@ -304,6 +304,7 @@ def _agent_config_to_wire(config: AgentConfig) -> dict[str, Any]:
     import dataclasses
 
     return {
+        "agent_id": config.effective_agent_id,
         "name": config.name,
         "agent_config_name": config.agent_config_name,
         "description": config.description,
@@ -631,23 +632,43 @@ class CoreUnit:
                 command_runner=self._config.command_runner,
             )
             try:
-                agent_name = await supervisor.spawn_agent(
+                resolved_config = replace(
                     resolved.config,
+                    agent_id=sp.config.agent_id,
+                )
+                agent_name = await supervisor.spawn_agent(
+                    resolved_config,
                     abilities=ability_instances,
                     persistence_factory=self._config.persistence_factory,
                 )
             except RegistryError as e:
                 return self._err(str(e))
+            recovery_mode = supervisor.recovery_mode(agent_name)
+            incarnation_id = supervisor.incarnation_id(agent_name)
             self._apply_hitl_timeout(agent_name)
             self._emit_event(
                 EventType.AGENT_SPAWNED.value,
-                {"name": agent_name, "config": _agent_config_to_wire(resolved.config)},
+                {
+                    "name": agent_name,
+                    "agent_id": resolved_config.effective_agent_id,
+                    "config": _agent_config_to_wire(resolved_config),
+                    "recovery_mode": recovery_mode,
+                    "incarnation_id": incarnation_id,
+                },
             )
-            return self._ok({"name": agent_name})
+            return self._ok(
+                {
+                    "name": agent_name,
+                    "agent_id": resolved_config.effective_agent_id,
+                    "recovery_mode": recovery_mode,
+                    "incarnation_id": incarnation_id,
+                }
+            )
 
         # ── 直传 abilities 路径（无 manifest_ref，Observer 直传 wire DTO） ──
         core_config = AgentConfig(
             name=sp.config.name,
+            agent_id=sp.config.agent_id,
             agent_config_name=sp.config.agent_config_name,
             description=sp.config.description,
             system_prompt=sp.config.system_prompt,
@@ -695,14 +716,29 @@ class CoreUnit:
         except RegistryError as e:
             return self._err(str(e))
 
+        recovery_mode = supervisor.recovery_mode(agent_name)
+        incarnation_id = supervisor.incarnation_id(agent_name)
         self._apply_hitl_timeout(agent_name)
 
         config_dict = sp.config.model_dump()
         self._emit_event(
             EventType.AGENT_SPAWNED.value,
-            {"name": agent_name, "config": config_dict},
+            {
+                "name": agent_name,
+                "agent_id": core_config.effective_agent_id,
+                "config": config_dict,
+                "recovery_mode": recovery_mode,
+                "incarnation_id": incarnation_id,
+            },
         )
-        return self._ok({"name": agent_name})
+        return self._ok(
+            {
+                "name": agent_name,
+                "agent_id": core_config.effective_agent_id,
+                "recovery_mode": recovery_mode,
+                "incarnation_id": incarnation_id,
+            }
+        )
 
     def _apply_hitl_timeout(self, agent_name: str) -> None:
         """best-effort 将 config.hitl_timeout 应用到 agent 的本地 executor。
@@ -725,9 +761,26 @@ class CoreUnit:
     ) -> dict[str, Any]:
         supervisor = self._require_supervisor()
         tp = TerminateAgentPayload.model_validate(payload)
+        info = supervisor._registry.get_info(tp.name)
+        agent_id = info.config.effective_agent_id
+        incarnation_id = info.incarnation_id
         await supervisor.terminate_agent(tp.name)
-        self._emit_event(EventType.AGENT_TERMINATED.value, {"name": tp.name})
-        return self._ok({"name": tp.name, "terminated": True})
+        self._emit_event(
+            EventType.AGENT_TERMINATED.value,
+            {
+                "name": tp.name,
+                "agent_id": agent_id,
+                "incarnation_id": incarnation_id,
+            },
+        )
+        return self._ok(
+            {
+                "name": tp.name,
+                "agent_id": agent_id,
+                "incarnation_id": incarnation_id,
+                "terminated": True,
+            }
+        )
 
     # ----------------------------------------------------------------
     # 消息路由命令
