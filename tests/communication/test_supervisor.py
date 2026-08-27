@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ghrah.chat.message import ChatMessage
 from ghrah.communication.errors import AgentNotFoundError, RegistryError
 from ghrah.communication.supervisor import SupervisorActor
 from ghrah.context.manager import ContextManager
@@ -238,6 +239,54 @@ class TestSupervisorPersistenceRecovery:
         assert old_node_ids.issubset(
             {node.id for node in await backend.load_chain("recoverable")}
         )
+
+    @pytest.mark.asyncio
+    async def test_restore_discards_legacy_messages_not_represented_by_chain_nodes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """旧 _build_response 产生的幽灵 AI 消息不能从后期 snapshot 复活。"""
+        self._patch_builder(monkeypatch)
+        backend = InMemoryBackend()
+        config = AgentConfig(name="recoverable", system_prompt="stable")
+
+        first = SupervisorActor()
+        await first.spawn_agent(config, abilities=[], persistence_factory=lambda _: backend)
+        cm = first._registry.get_info("recoverable").actor_handle._context_manager
+        for iteration in range(1, 6):
+            cm.begin_iteration()
+            cm.add_messages(
+                [
+                    ChatMessage.user(text_or_blocks=f"u{iteration}"),
+                    ChatMessage.ai(text=f"a{iteration}"),
+                ]
+            )
+            cm.commit_iteration(ability_names=["conversation"])
+            if iteration == 1:
+                # 模拟旧版在 commit 后额外追加、因而不属于任何 node delta 的消息。
+                cm.add_messages([ChatMessage.ai(text="ghost")])
+        await first.terminate_agent("recoverable")
+
+        restarted = SupervisorActor()
+        await restarted.spawn_agent(
+            config, abilities=[], persistence_factory=lambda _: backend
+        )
+        restored = restarted._registry.get_info("recoverable").actor_handle._context_manager
+        texts = [message.text for message in restored.message_store.current_messages]
+
+        assert "ghost" not in texts
+        assert texts == [
+            "stable",
+            "u1",
+            "a1",
+            "u2",
+            "a2",
+            "u3",
+            "a3",
+            "u4",
+            "a4",
+            "u5",
+            "a5",
+        ]
         await restarted.terminate_agent("recoverable")
 
     @pytest.mark.asyncio

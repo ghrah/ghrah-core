@@ -1073,24 +1073,30 @@ class ContextManager:
         self._state_manager = StateManager(current_state)
 
         # 4. 恢复 MessageStore；持久化读取已在结构校验前完成。
-        snapshot_node = next(
-            (n for n in reversed(nodes) if n.is_snapshot and n.messages_snapshot),
+        # 只沿 active branch 的 parent 链恢复消息，并优先从最早（通常是根）
+        # snapshot 重放全部 node delta。旧版本在 _build_response 中写过不属于
+        # 任何节点的幽灵 AI 消息；这些消息可能污染后续完整 messages 或较晚
+        # snapshot。以链节点为事实源重放可在首次恢复时自动清理该历史损坏。
+        active_history = self._chain.get_history()
+        snapshot_index = next(
+            (
+                index
+                for index, node in enumerate(active_history)
+                if node.is_snapshot and node.messages_snapshot is not None
+            ),
             None,
         )
-        if snapshot_node and snapshot_node.messages_snapshot:
-            deltas: list[list[Any]] = []
-            found_snapshot = False
-            for node in nodes:
-                if node.id == snapshot_node.id:
-                    found_snapshot = True
-                    continue
-                if found_snapshot and node.messages_delta:
-                    deltas.append(node.messages_delta)
-
+        if snapshot_index is not None:
+            snapshot_node = active_history[snapshot_index]
+            deltas = [
+                node.messages_delta
+                for node in active_history[snapshot_index + 1 :]
+                if node.messages_delta
+            ]
             self._message_store = MessageStore(
                 snapshot_interval=self._message_store.snapshot_interval,
             )
-            self._message_store.rebuild_from(snapshot_node.messages_snapshot, deltas)
+            self._message_store.rebuild_from(snapshot_node.messages_snapshot or [], deltas)
         elif messages:
             self._message_store = MessageStore(
                 snapshot_interval=self._message_store.snapshot_interval,

@@ -412,22 +412,9 @@ class ActorAgent:
             self._iteration_state.max_iterations = self.config.max_iterations
             self._iteration_state.reset()
 
-            # 驱动循环
-            # 发布链头节点的 ActionChainUpdatedEvent
-            head_node = self._context_manager.chain.head
-            if head_node is not None:
-                try:
-                    from ghrah.context.persistence.serialization import serialize_node
-
-                    await self._event_publisher.publish(
-                        ActionChainUpdatedEvent(
-                            agent_name=self.config.name,
-                            node=serialize_node(head_node),
-                        )
-                    )
-                except Exception:
-                    logger.debug("Failed to publish head node event", exc_info=True)
-
+            # 仅发布本轮新提交的节点。旧实现会在每次 receive 前重发当前链头；
+            # Subject 重启后 RoomFilter 的内存去重为空，旧回复因此会先于新回复
+            # 再次落入 RoomLog。历史同步由 get_chain_history 显式承担。
             await self._drive_loop()
 
             # 构建最终回复
@@ -866,10 +853,9 @@ class ActorAgent:
         )
         self._message_history.append(reply)
 
-        # 将 AI 回复添加到 ContextManager
-        self._context_manager.add_messages(
-            [ChatMessage.ai(text=content, source=f"agent:{self.config.name}")]
-        )
+        # LLM 响应已在 _action 中作为 AI ChatMessage 纳入本轮事务并随节点
+        # commit。这里再追加一次会生成不属于任何 node delta 的幽灵消息，
+        # 持久化/恢复后表现为上下文里每条最终回复重复两遍。
 
         logger.info(f"ActorAgent[{self.config.name}] replied: {content[:100]}...")
         return reply

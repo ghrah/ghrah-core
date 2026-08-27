@@ -27,6 +27,7 @@ from ghrah.chat.content import TextBlock, ToolCallBlock
 from ghrah.chat.format import LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.core.config import AgentConfig
+from ghrah.core.events import CoreEventType
 from ghrah.core.exceptions import AgentError, HookError
 from ghrah.core.message import AgentMessage as Message
 from ghrah.core.message import MessageType
@@ -740,6 +741,37 @@ class TestReceiveIntegration:
         msg2 = _make_message("msg2")
         reply2 = await agent.receive(msg2)
         assert reply2.content == "Response 2"
+        assert [
+            message.role
+            for message in agent._context_manager.message_store.current_messages
+        ] == ["user", "ai", "user", "ai"]
+
+    @pytest.mark.asyncio
+    async def test_receive_does_not_republish_previous_chain_head(self) -> None:
+        """第二条消息只发布新节点，不能先重放上一条回复节点。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(ConversationAbility())
+        agent._llm = _make_mock_llm("first")
+        publisher = MagicMock()
+        publisher.publish = AsyncMock()
+        agent._event_publisher = publisher
+
+        await agent.receive(_make_message("one"))
+        agent._llm.generate.return_value = LLMResponse(
+            content_blocks=[TextBlock(text="second")]
+        )
+        await agent.receive(_make_message("two"))
+
+        chain_events = [
+            call.args[0]
+            for call in publisher.publish.await_args_list
+            if call.args[0].event_type == CoreEventType.ACTION_CHAIN_UPDATED
+        ]
+        assert len(chain_events) == 2
+        assert [event.node["iteration"] for event in chain_events] == [1, 2]
+        assert chain_events[0].node["id"] != chain_events[1].node["id"]
 
 
 # ----------------------------------------------------------------
