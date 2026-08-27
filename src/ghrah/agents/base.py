@@ -415,7 +415,12 @@ class ActorAgent:
             # 仅发布本轮新提交的节点。旧实现会在每次 receive 前重发当前链头；
             # Subject 重启后 RoomFilter 的内存去重为空，旧回复因此会先于新回复
             # 再次落入 RoomLog。历史同步由 get_chain_history 显式承担。
-            await self._drive_loop()
+            delivery_context = {
+                key: message.metadata[key]
+                for key in ("room_id", "project_id", "agent_id")
+                if message.metadata and message.metadata.get(key)
+            }
+            await self._drive_loop(delivery_context=delivery_context or None)
 
             # 构建最终回复
             response = self._build_response(message)
@@ -448,7 +453,10 @@ class ActorAgent:
             )
             return error_reply
 
-    async def _drive_loop(self) -> None:
+    async def _drive_loop(
+        self,
+        delivery_context: dict[str, Any] | None = None,
+    ) -> None:
         """核心驱动循环 — 每次迭代执行一个 action。
 
         驱动循环控制状态（iteration, max_iterations, should_continue 等）
@@ -476,7 +484,11 @@ class ActorAgent:
                 if not hook_result.should_continue:
                     if hook_result.route_to:
                         # 路由到指定 ability（如 end_task）
-                        await self._execute_routed_ability(accumulated_data, hook_result.route_to)
+                        await self._execute_routed_ability(
+                            accumulated_data,
+                            hook_result.route_to,
+                            delivery_context=delivery_context,
+                        )
                     break
 
             # 2. 开始事务
@@ -502,10 +514,16 @@ class ActorAgent:
                     if action_results
                     else ["no_action"]
                 )
+                node_metadata = dict(llm_meta_for_node)
+                if delivery_context:
+                    # 一次 receive 可能跨多个 tool-call 迭代；只有首节点含
+                    # 用户 ChatMessage。把投递归属写入每个节点，确保最终
+                    # conversation 节点仍可稳定投影回原 Room。
+                    node_metadata["delivery_context"] = dict(delivery_context)
                 node = cm.commit_iteration(
                     ability_names=ability_names,
                     action_results=action_results,
-                    llm_metadata=llm_meta_for_node or None,
+                    llm_metadata=node_metadata or None,
                 )
 
                 # ────── 发布 ActionChainUpdated 事件 ──────
@@ -585,7 +603,11 @@ class ActorAgent:
                 max_ctx = self._build_hook_context(accumulated_data)
                 max_hook_result = await self._run_hooks(HookPoint.ON_MAX_ITERATIONS, max_ctx)
                 if max_hook_result is not None and max_hook_result.route_to:
-                    await self._execute_routed_ability(accumulated_data, max_hook_result.route_to)
+                    await self._execute_routed_ability(
+                        accumulated_data,
+                        max_hook_result.route_to,
+                        delivery_context=delivery_context,
+                    )
                 break
 
             self._iteration_state.advance()
@@ -707,7 +729,11 @@ class ActorAgent:
         return {"results": results, "llm_metadata": llm_meta}
 
     async def _execute_routed_ability(
-        self, accumulated_data: dict[str, Any], ability_name: str
+        self,
+        accumulated_data: dict[str, Any],
+        ability_name: str,
+        *,
+        delivery_context: dict[str, Any] | None = None,
     ) -> None:
         """执行路由目标的 ability（用于 BEFORE_ACTION 和 ON_MAX_ITERATIONS 的强制路由）。"""
         cm = self._context_manager
@@ -724,6 +750,11 @@ class ActorAgent:
             cm.commit_iteration(
                 ability_names=[ability_name],
                 action_results=[{"ability_name": ability_name, "action_result": action_result}],
+                llm_metadata=(
+                    {"delivery_context": dict(delivery_context)}
+                    if delivery_context
+                    else None
+                ),
             )
         except Exception as e:
             cm.rollback_iteration(e)

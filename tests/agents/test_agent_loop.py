@@ -773,6 +773,84 @@ class TestReceiveIntegration:
         assert [event.node["iteration"] for event in chain_events] == [1, 2]
         assert chain_events[0].node["id"] != chain_events[1].node["id"]
 
+    @pytest.mark.asyncio
+    async def test_room_delivery_context_survives_tool_call_iterations(self) -> None:
+        """最终 conversation 节点没有 user delta 时仍携带 Room 归属。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(
+            MockAbility(
+                name="write_file",
+                action_result=ActionResult(
+                    outcome=ActionOutcome.SUCCESS,
+                    data={"bytes_written": 3},
+                ),
+                tool_schema={"type": "function", "function": {"name": "write_file"}},
+            )
+        )
+        agent.register_ability(ConversationAbility())
+        agent._llm = AsyncMock()
+        agent._llm.configure_tools = MagicMock()
+        agent._llm.generate.side_effect = [
+            LLMResponse(
+                content_blocks=[
+                    ToolCallBlock(
+                        id="call-write",
+                        name="write_file",
+                        arguments={"content": "poem"},
+                    )
+                ]
+            ),
+            LLMResponse(content_blocks=[TextBlock(text="已写好。")]),
+        ]
+        publisher = MagicMock()
+        publisher.publish = AsyncMock()
+        agent._event_publisher = publisher
+
+        await agent.receive(
+            Message(
+                sender="user",
+                recipient="test-agent",
+                content="写一首诗",
+                type=MessageType.CHAT,
+                metadata={
+                    "room_id": "room-1",
+                    "project_id": "project-1",
+                    "agent_id": "stable-1",
+                },
+            )
+        )
+
+        chain_events = [
+            call.args[0]
+            for call in publisher.publish.await_args_list
+            if call.args[0].event_type == CoreEventType.ACTION_CHAIN_UPDATED
+        ]
+        assert len(chain_events) == 2
+        assert any(
+            message["role"] == "user"
+            for message in chain_events[0].node["messages_delta"]
+        )
+        assert all(
+            message["role"] != "user"
+            for message in chain_events[1].node["messages_delta"]
+        )
+        assert [
+            event.node["metadata"]["delivery_context"] for event in chain_events
+        ] == [
+            {
+                "room_id": "room-1",
+                "project_id": "project-1",
+                "agent_id": "stable-1",
+            },
+            {
+                "room_id": "room-1",
+                "project_id": "project-1",
+                "agent_id": "stable-1",
+            },
+        ]
+
 
 # ----------------------------------------------------------------
 # 测试：并行 tool_calls 执行
