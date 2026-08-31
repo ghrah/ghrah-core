@@ -60,14 +60,14 @@ class ChatMessage:
         return [b for b in self.content_blocks if isinstance(b, ToolResultBlock)]
 
     @classmethod
-    def system(cls, text: str, source: str | None = "system", **kwargs: Any) -> ChatMessage:
+    def system(cls, text: str, source: str | None = "system:config", **kwargs: Any) -> ChatMessage:
         return cls(role="system", content_blocks=[TextBlock(text=text)], source=source, **kwargs)
 
     @classmethod
     def user(
         cls,
         text_or_blocks: str | list[ContentBlock] | None = None,
-        source: str | None = "human",
+        source: str | None = "human:user",
         **kwargs: Any,
     ) -> ChatMessage:
         if text_or_blocks is None:

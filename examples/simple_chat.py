@@ -17,8 +17,8 @@ import asyncio
 import logging
 
 from ghrah.abilities.builtin.conversation import ConversationAbility
-from ghrah.agents.base import ActorAgent
-from ghrah.core.config import AgentConfig
+from ghrah.agents.builder import AgentBuilder
+from ghrah.types.config_types import AgentConfig
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -33,8 +33,7 @@ async def main() -> None:
         system_prompt="你是一个友好的 AI 助手，请用中文回答问题。",
     )
 
-    agent = ActorAgent(config)
-    agent.register_ability(ConversationAbility())
+    agent = AgentBuilder.from_config(config, abilities=[ConversationAbility()])
 
     print("=" * 60)
     print("ActorAgent 单 Agent 对话示例")

@@ -32,6 +32,7 @@ Phase 1 公共 API：
 """
 
 from ghrah.context.chain import ActionChain
+from ghrah.context.iteration_state import IterationState
 from ghrah.context.manager import ContextManager
 from ghrah.context.message_store import MessageStore
 from ghrah.context.node import ContextNode
@@ -68,6 +69,7 @@ __all__ = [
     "MessageStore",
     "StateManager",
     "ContextManager",
+    "IterationState",
     "Session",
     "create_rebased_context",
     "WindowStrategy",

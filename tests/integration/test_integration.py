@@ -28,7 +28,8 @@ from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import TextBlock
 from ghrah.chat.format import LLMResponse
 from ghrah.core.config import AgentConfig
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 # ── Helpers ──
 
@@ -38,9 +39,9 @@ def _create_agent(
     supervisor: Any = None,
 ) -> Any:
     """创建一个 ActorAgent 实例。"""
-    from ghrah.agents.base import ActorAgent
+    from ghrah.agents.builder import AgentBuilder
 
-    agent = ActorAgent(config or AgentConfig(name="test-agent"), supervisor)
+    agent = AgentBuilder.from_config(config or AgentConfig(name="test-agent"), supervisor=supervisor)
     return agent
 
 

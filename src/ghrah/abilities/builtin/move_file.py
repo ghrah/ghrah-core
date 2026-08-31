@@ -22,14 +22,15 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
@@ -155,14 +156,14 @@ class MoveFileAbility(Ability):
 
         try:
             # 验证源文件存在
-            if not os.path.exists(source_path):
+            if not Path(source_path).exists():
                 return ActionResult(
                     outcome=ActionOutcome.FAILURE,
                     data={"error": f"Source file not found: {source_path}"},
                 )
 
             # 检查目标文件是否已存在
-            if os.path.exists(destination_path) and not overwrite:
+            if Path(destination_path).exists() and not overwrite:
                 return ActionResult(
                     outcome=ActionOutcome.FAILURE,
                     data={
@@ -175,9 +176,8 @@ class MoveFileAbility(Ability):
 
             # 创建目标目录
             if create_dirs:
-                parent = os.path.dirname(os.path.abspath(destination_path))
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
+                parent = Path(destination_path).resolve().parent
+                parent.mkdir(parents=True, exist_ok=True)
 
             # 执行移动
             shutil.move(source_path, destination_path)

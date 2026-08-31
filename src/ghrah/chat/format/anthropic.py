@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ghrah.chat.content import (
     FileBlock,
@@ -15,8 +15,12 @@ from ghrah.chat.content import (
     TextBlock,
     ToolCallBlock,
 )
-from ghrah.chat.format import ChatFormat, LLMResponse, TokenUsage
+from ghrah.chat.format import ChatFormat, LLMResponse
 from ghrah.chat.message import ChatMessage
+from ghrah.types.tokens import TokenUsage
+
+if TYPE_CHECKING:
+    from ghrah.types.config_types import ModelOverrides
 
 logger = logging.getLogger(__name__)
 

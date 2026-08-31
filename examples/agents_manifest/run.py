@@ -35,7 +35,7 @@ from pathlib import Path
 from runner import ManifestRunner
 
 from ghrah.communication import SupervisorActor
-from ghrah.core.config import AgentConfig
+from ghrah.types.config_types import AgentConfig
 
 logging.basicConfig(
     level=logging.INFO,

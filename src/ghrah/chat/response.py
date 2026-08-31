@@ -2,11 +2,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""LLM 响应元数据提取工具函数。
+
+从 LLMResponse 中提取 token 用量、CoT 思考内容和厂商原始响应元数据。
+"""
+
 from __future__ import annotations
 
 from typing import Any
 
-from ghrah.chat.format import LLMResponse, TokenUsage
+from ghrah.chat.format import LLMResponse
+from ghrah.types.tokens import TokenUsage
+
+__all__ = [
+    "extract_token_usage",
+    "extract_reasoning_content",
+    "extract_response_metadata",
+]
 
 
 def extract_token_usage(response: LLMResponse) -> TokenUsage | None:
@@ -40,6 +52,7 @@ def extract_reasoning_content(response: LLMResponse) -> str | None:
 
 
 def extract_response_metadata(response: LLMResponse) -> dict[str, Any]:
+    """从 LLMResponse 提取厂商原始响应元数据。"""
     if not isinstance(response, LLMResponse):
         raise TypeError(f"Expected LLMResponse, got {type(response).__name__}")
 

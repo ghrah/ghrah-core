@@ -21,12 +21,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
@@ -148,7 +150,7 @@ class ReadFileAbility(Ability):
         logger.debug(f"ReadFileAbility: reading {file_path}")
 
         try:
-            with open(file_path, encoding=encoding) as f:
+            with Path(file_path).open(encoding=encoding) as f:
                 content = f.read()
 
             logger.debug(f"ReadFileAbility: read {len(content)} chars from {file_path}")

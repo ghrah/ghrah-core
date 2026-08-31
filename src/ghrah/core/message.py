@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+__all__ = ["AgentMessage", "MessageType", "classify_source"]
+
 
 class MessageType(str, Enum):
     """消息类型枚举"""
@@ -24,40 +26,23 @@ class MessageType(str, Enum):
     BROADCAST = "broadcast"  # 广播消息
 
 
-@dataclass
-class TokenUsage:
-    """LLM 调用的 token 用量。
+def classify_source(sender: str) -> str:
+    """将 sender 归类为 {category}:{object} 格式的 source。
 
-    Attributes:
-        input_tokens: 输入 token 数
-        output_tokens: 输出 token 数
-        total_tokens: 总 token 数
+    当前规则（仅 human/agent，system/tool 不经此函数）：
+    - sender == "user" → "human:user"
+    - 其他 → f"agent:{sender}"
+
+    扩展点：未来引入多人类/sensor/cron 时，在此增加分类规则，
+    或改为从 AgentMessage.sender_type 字段取值。
     """
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-    def to_dict(self) -> dict[str, int]:
-        """转换为 dict，便于序列化。"""
-        return {
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "total_tokens": self.total_tokens,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TokenUsage:
-        """从 dict 创建 TokenUsage。"""
-        return cls(
-            input_tokens=data.get("input_tokens", 0),
-            output_tokens=data.get("output_tokens", 0),
-            total_tokens=data.get("total_tokens", 0),
-        )
+    if sender == "user":
+        return "human:user"
+    return f"agent:{sender}"
 
 
 @dataclass
-class Message:
+class AgentMessage:
     """Agent 间通信的统一消息对象。
 
     Attributes:
@@ -69,6 +54,13 @@ class Message:
         metadata: 扩展元数据（工具参数、错误信息等）
         timestamp: 消息创建时间戳（Unix 时间）
         reply_to: 回复的目标消息 ID（用于请求-响应关联）
+        content_blocks: 结构化内容块列表（序列化后的字典），
+            保留 reasoning/text 等类型区分。
+            为 None 时表示仅有纯文本 content。
+
+    Note:
+        类名 AgentMessage 用于区别于 ghrah.protocol.types.Envelope（别名 Message）。
+        本类是 Agent 间通信的领域消息，不是 WebSocket 信封。
     """
 
     sender: str
@@ -79,31 +71,39 @@ class Message:
     metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=lambda: __import__("time").time())
     reply_to: str | None = None
+    content_blocks: list[dict[str, Any]] | None = None
 
     def to_chat_message(self):
         """转换为 ChatMessage。
 
         将内部消息协议转换为 ChatMessage，用于 LLM 上下文管理。
 
+        如果 content_blocks 存在，优先使用结构化块；
+        否则回退到纯文本 TextBlock。
+
         Returns:
             ChatMessage 实例
         """
-        from ghrah.chat.content import ContentBlock, TextBlock
+        from ghrah.chat.content import TextBlock, blocks_from_dicts
         from ghrah.chat.message import ChatMessage
 
-        blocks: list[ContentBlock] = [TextBlock(text=self.content)]
+        if self.content_blocks:
+            blocks = blocks_from_dicts(self.content_blocks)
+        else:
+            blocks = [TextBlock(text=self.content)]
 
-        role_map: dict[MessageType, tuple[str, str | None]] = {
-            MessageType.CHAT: ("user", self.sender),
-            MessageType.COMMAND: ("user", self.sender),
-            MessageType.TOOL_CALL: ("ai", self.sender),
-            MessageType.TOOL_RESULT: ("tool", self.sender),
-            MessageType.RESULT: ("ai", self.sender),
-            MessageType.ERROR: ("system", self.sender),
-            MessageType.BROADCAST: ("user", self.sender),
+        role_map: dict[MessageType, str] = {
+            MessageType.CHAT: "user",
+            MessageType.COMMAND: "user",
+            MessageType.TOOL_CALL: "ai",
+            MessageType.TOOL_RESULT: "tool",
+            MessageType.RESULT: "ai",
+            MessageType.ERROR: "system",
+            MessageType.BROADCAST: "user",
         }
 
-        role, source = role_map.get(self.type, ("user", self.sender))
+        role = role_map.get(self.type, "user")
+        source = classify_source(self.sender)
         return ChatMessage(
             role=role,
             content_blocks=blocks,
@@ -113,28 +113,33 @@ class Message:
 
     @staticmethod
     def create_reply(
-        original: Message, content: str, msg_type: MessageType | None = None
-    ) -> Message:
+        original: AgentMessage,
+        content: str,
+        msg_type: MessageType | None = None,
+        content_blocks: list[dict[str, Any]] | None = None,
+    ) -> AgentMessage:
         """便捷方法：基于原始消息创建回复。
 
         Args:
             original: 原始消息
             content: 回复内容
             msg_type: 回复消息类型（默认为 RESULT）
+            content_blocks: 结构化内容块（序列化后的字典），保留 reasoning/text 等类型区分
 
         Returns:
-            新的回复 Message
+            新的回复 AgentMessage
         """
-        return Message(
+        return AgentMessage(
             sender=original.recipient,
             recipient=original.sender,
             content=content,
             type=msg_type or MessageType.RESULT,
             reply_to=original.id,
+            content_blocks=content_blocks,
         )
 
     def __repr__(self) -> str:
         return (
-            f"Message(id={self.id!r}, {self.sender!r} -> {self.recipient!r}, "
+            f"AgentMessage(id={self.id!r}, {self.sender!r} -> {self.recipient!r}, "
             f"type={self.type.value!r}, content={self.content[:50]!r}...)"
         )

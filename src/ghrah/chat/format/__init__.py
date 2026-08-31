@@ -21,31 +21,10 @@ from typing import TYPE_CHECKING, Any
 
 from ghrah.chat.content import ContentBlock, ReasoningBlock, TextBlock, ToolCallBlock
 from ghrah.chat.message import ChatMessage
+from ghrah.types.tokens import TokenUsage
 
 if TYPE_CHECKING:
-    from ghrah.core.config import ModelOverrides
-
-
-@dataclass
-class TokenUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-    def to_dict(self) -> dict[str, int]:
-        return {
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "total_tokens": self.total_tokens,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TokenUsage:
-        return cls(
-            input_tokens=data.get("input_tokens", 0),
-            output_tokens=data.get("output_tokens", 0),
-            total_tokens=data.get("total_tokens", 0),
-        )
+    from ghrah.types.config_types import ModelOverrides
 
 
 @dataclass

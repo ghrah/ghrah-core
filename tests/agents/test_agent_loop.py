@@ -21,13 +21,16 @@ import pytest
 
 from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
+from ghrah.abilities.errors import AbilityNotFoundError
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
-from ghrah.chat.content import TextBlock, ToolCallBlock
+from ghrah.chat.content import ReasoningBlock, TextBlock, ToolCallBlock
 from ghrah.chat.format import LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.core.config import AgentConfig
+from ghrah.core.events import CoreEventType
 from ghrah.core.exceptions import AgentError, HookError
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 # ----------------------------------------------------------------
 # 测试用 Mock 类
@@ -123,10 +126,10 @@ def _create_agent(
     config: AgentConfig | None = None,
     supervisor: Any = None,
 ) -> Any:
-    """创建一个 ActorAgent 实例（直接实例化）。"""
-    from ghrah.agents.base import ActorAgent
+    """创建一个 ActorAgent 实例（通过 AgentBuilder）。"""
+    from ghrah.agents.builder import AgentBuilder
 
-    agent = ActorAgent(config or AgentConfig(name="test-agent"), supervisor)
+    agent = AgentBuilder.from_config(config or AgentConfig(name="test-agent"), supervisor=supervisor)
     return agent
 
 
@@ -244,7 +247,6 @@ class TestAbilityRegistration:
         assert len(agent._all_hooks) == 0
 
     def test_unregister_nonexistent_raises(self) -> None:
-        from ghrah.core.exceptions import AbilityNotFoundError
 
         agent = _create_agent()
 
@@ -383,145 +385,6 @@ class TestRunHooks:
 
 
 # ----------------------------------------------------------------
-# 测试：_run_hooks 分离 — drive_loop/action 级 vs ability 级
-# ----------------------------------------------------------------
-
-
-class TestRunHooksRouting:
-    """测试 _run_hooks 在本地和远程模式下的路由行为。
-
-    drive_loop 级和 action 级 hook（BEFORE_ACTION, AFTER_ACTION, ON_ERROR,
-    ON_MAX_ITERATIONS, PRE_LLM_CALL, POST_LLM_CALL）始终由 Agent 基类直接执行，
-    即使 AbilityExecutor 是 RemoteAbilityExecutor。
-
-    ability 级 hook（PRE_EXECUTE, POST_EXECUTE）委托给 AbilityExecutor。
-    """
-
-    @pytest.mark.asyncio
-    async def test_after_action_hook_fires_with_remote_executor(self) -> None:
-        """RemoteAbilityExecutor 模式下 AFTER_ACTION hook 仍然执行。"""
-        from ghrah.abilities.executor import RemoteAbilityExecutor
-
-        stop_hook = MockHook(
-            hook_point=HookPoint.AFTER_ACTION,
-            result=HookResult.stop(message="Remote stop"),
-        )
-        agent = _create_agent()
-        agent.register_ability(MockAbility(name="test", hooks=[stop_hook]))
-        mock_command_sender = AsyncMock()
-        agent._ability_executor = RemoteAbilityExecutor(
-            command_sender=mock_command_sender, agent_name="test-agent"
-        )
-
-        context = AbilityExecutionContext()
-        result = await agent._run_hooks(HookPoint.AFTER_ACTION, context)
-
-        assert result is not None
-        assert result.should_continue is False
-        assert result.message == "Remote stop"
-        assert stop_hook.execute_count == 1
-
-    @pytest.mark.asyncio
-    async def test_before_action_hook_fires_with_remote_executor(self) -> None:
-        """RemoteAbilityExecutor 模式下 BEFORE_ACTION hook 仍然执行。"""
-        from ghrah.abilities.executor import RemoteAbilityExecutor
-
-        block_hook = MockHook(
-            hook_point=HookPoint.BEFORE_ACTION,
-            result=HookResult.stop(message="Blocked"),
-        )
-        agent = _create_agent()
-        agent.register_ability(MockAbility(name="test", hooks=[block_hook]))
-        mock_command_sender = AsyncMock()
-        agent._ability_executor = RemoteAbilityExecutor(
-            command_sender=mock_command_sender, agent_name="test-agent"
-        )
-
-        context = AbilityExecutionContext()
-        result = await agent._run_hooks(HookPoint.BEFORE_ACTION, context)
-
-        assert result is not None
-        assert result.should_continue is False
-        assert block_hook.execute_count == 1
-
-    @pytest.mark.asyncio
-    async def test_pre_execute_hook_delegates_to_remote_executor(self) -> None:
-        """PRE_EXECUTE hook 在远程模式下委托给 RemoteAbilityExecutor（返回 None）。"""
-        from ghrah.abilities.executor import RemoteAbilityExecutor
-
-        pre_hook = MockHook(
-            hook_point=HookPoint.PRE_EXECUTE,
-            result=HookResult.stop(message="Should be ignored"),
-        )
-        agent = _create_agent()
-        agent.register_ability(MockAbility(name="test", hooks=[pre_hook]))
-        mock_command_sender = AsyncMock()
-        agent._ability_executor = RemoteAbilityExecutor(
-            command_sender=mock_command_sender, agent_name="test-agent"
-        )
-
-        context = AbilityExecutionContext()
-        result = await agent._run_hooks(HookPoint.PRE_EXECUTE, context)
-
-        assert result is None
-        assert pre_hook.execute_count == 0
-
-    @pytest.mark.asyncio
-    async def test_post_execute_hook_delegates_to_remote_executor(self) -> None:
-        """POST_EXECUTE hook 在远程模式下委托给 RemoteAbilityExecutor（返回 None）。"""
-        from ghrah.abilities.executor import RemoteAbilityExecutor
-
-        post_hook = MockHook(
-            hook_point=HookPoint.POST_EXECUTE,
-            result=HookResult.stop(message="Should be ignored"),
-        )
-        agent = _create_agent()
-        agent.register_ability(MockAbility(name="test", hooks=[post_hook]))
-        mock_command_sender = AsyncMock()
-        agent._ability_executor = RemoteAbilityExecutor(
-            command_sender=mock_command_sender, agent_name="test-agent"
-        )
-
-        context = AbilityExecutionContext()
-        result = await agent._run_hooks(HookPoint.POST_EXECUTE, context)
-
-        assert result is None
-        assert post_hook.execute_count == 0
-
-    @pytest.mark.asyncio
-    async def test_conversation_done_hook_stops_loop_remote(self) -> None:
-        """ConversationDoneHook 在 RemoteAbilityExecutor 模式下仍能正确终止循环。
-
-        这是 Bug 1 的核心回归测试：RemoteAbilityExecutor.run_hooks() 始终
-        返回 None 导致 ConversationDoneHook 不触发，循环不会终止。
-        修复后 AFTER_HOOK hook 由 Agent 直接执行，不受 executor 影响。
-
-        验证方式：直接调用 _run_hooks(AFTER_ACTION)，确认
-        ConversationDoneHook 的 stop 结果正确返回。
-        """
-        from ghrah.abilities.builtin.conversation import ConversationAbility
-        from ghrah.abilities.executor import RemoteAbilityExecutor
-
-        agent = _create_agent()
-        conv = ConversationAbility()
-        agent.register_ability(conv)
-        mock_command_sender = AsyncMock()
-        agent._ability_executor = RemoteAbilityExecutor(
-            command_sender=mock_command_sender, agent_name="test-agent"
-        )
-
-        context = AbilityExecutionContext(
-            current_ability_name="conversation",
-            accumulated_data={"llm_response": "test response"},
-        )
-
-        result = await agent._run_hooks(HookPoint.AFTER_ACTION, context)
-
-        assert result is not None
-        assert result.should_continue is False
-
-
-# ----------------------------------------------------------------
 # 测试：核心驱动循环
 # ----------------------------------------------------------------
 
@@ -544,13 +407,12 @@ class TestDriveLoop:
         stop_hook = StopAfterOneHook()
         agent._all_hooks.append(stop_hook)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
-        assert cm.last_action_result is not None
-        assert cm.last_action_result.outcome == ActionOutcome.SUCCESS
+        assert agent._iteration_state.last_action_result is not None
+        assert agent._iteration_state.last_action_result.outcome == ActionOutcome.SUCCESS
 
     @pytest.mark.asyncio
     async def test_max_iterations_limit(self) -> None:
@@ -566,14 +428,13 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("reply")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = 3
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 3
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert mock_llm.generate.call_count == 3
-        assert cm.iteration == 2
+        assert agent._iteration_state.iteration == 2
 
     @pytest.mark.asyncio
     async def test_unlimited_iterations_with_hook_stop(self) -> None:
@@ -586,14 +447,13 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("reply")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = -1
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = -1
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert mock_llm.generate.call_count == 1
-        assert cm.is_unlimited is True
+        assert agent._iteration_state.is_unlimited is True
 
     @pytest.mark.asyncio
     async def test_before_action_hook_stops_loop(self) -> None:
@@ -609,13 +469,12 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("response")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert mock_llm.generate.call_count == 0
-        assert cm.last_action_result is None
+        assert agent._iteration_state.last_action_result is None
 
     @pytest.mark.asyncio
     async def test_before_action_hook_routes_to_ability(self) -> None:
@@ -639,13 +498,12 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("response")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert end_ability.execute_count == 1
-        assert cm.last_action_result.data["response"] == "task ended"
+        assert agent._iteration_state.last_action_result.data["response"] == "task ended"
 
     @pytest.mark.asyncio
     async def test_after_action_hook_route_to_triggers_pending_route(self) -> None:
@@ -692,14 +550,16 @@ class TestDriveLoop:
         mock_llm.configure_tools = MagicMock()
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = 10
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 10
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
         assert route_hook._call_count >= 1
-        assert cm.pending_route == "step2" or cm.iteration >= 1
+        assert (
+            agent._iteration_state.pending_route == "step2"
+            or agent._iteration_state.iteration >= 1
+        )
 
     @pytest.mark.asyncio
     async def test_after_action_hook_modifies_context(self) -> None:
@@ -723,8 +583,7 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("response")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -748,8 +607,7 @@ class TestDriveLoop:
         mock_llm.configure_tools = MagicMock()
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError, match="LLM crashed"):
             await agent._drive_loop()
@@ -783,9 +641,8 @@ class TestDriveLoop:
         mock_llm = _make_mock_llm("reply")
         agent._llm = mock_llm
 
-        cm = agent._context_manager
-        cm.max_iterations = 2
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 2
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -884,6 +741,158 @@ class TestReceiveIntegration:
         msg2 = _make_message("msg2")
         reply2 = await agent.receive(msg2)
         assert reply2.content == "Response 2"
+        assert [
+            message.role
+            for message in agent._context_manager.message_store.current_messages
+        ] == ["user", "ai", "user", "ai"]
+
+    @pytest.mark.asyncio
+    async def test_reasoning_only_response_retries_for_visible_text(self) -> None:
+        """终止响应只有 reasoning 时补全一次，且不把首次空响应写入历史。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(ConversationAbility())
+        agent._llm = AsyncMock()
+        agent._llm.configure_tools = MagicMock()
+        agent._llm.generate.side_effect = [
+            LLMResponse(content_blocks=[ReasoningBlock(reasoning="内部思考")]),
+            LLMResponse(content_blocks=[TextBlock(text="下午好呀。")]),
+        ]
+
+        reply = await agent.receive(_make_message("下午好"))
+
+        assert reply.content == "下午好呀。"
+        assert agent._llm.generate.await_count == 2
+        messages = agent._context_manager.message_store.current_messages
+        assert [message.role for message in messages] == ["user", "ai"]
+        assert messages[-1].text == "下午好呀。"
+        retry_messages = agent._llm.generate.await_args_list[1].args[0]
+        assert any(message.source == "system:runtime" for message in retry_messages)
+
+    @pytest.mark.asyncio
+    async def test_reasoning_only_retry_uses_safe_visible_fallback(self) -> None:
+        """补全仍无正文时给出安全提示，不能把 reasoning 当用户回复。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(ConversationAbility())
+        agent._llm = AsyncMock()
+        agent._llm.configure_tools = MagicMock()
+        agent._llm.generate.side_effect = [
+            LLMResponse(content_blocks=[ReasoningBlock(reasoning="隐私思考一")]),
+            LLMResponse(content_blocks=[ReasoningBlock(reasoning="隐私思考二")]),
+        ]
+
+        reply = await agent.receive(_make_message("下午好"))
+
+        assert reply.content == "模型未返回可展示的正文，请重试。"
+        assert "隐私思考" not in reply.content
+
+    @pytest.mark.asyncio
+    async def test_receive_does_not_republish_previous_chain_head(self) -> None:
+        """第二条消息只发布新节点，不能先重放上一条回复节点。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(ConversationAbility())
+        agent._llm = _make_mock_llm("first")
+        publisher = MagicMock()
+        publisher.publish = AsyncMock()
+        agent._event_publisher = publisher
+
+        await agent.receive(_make_message("one"))
+        agent._llm.generate.return_value = LLMResponse(
+            content_blocks=[TextBlock(text="second")]
+        )
+        await agent.receive(_make_message("two"))
+
+        chain_events = [
+            call.args[0]
+            for call in publisher.publish.await_args_list
+            if call.args[0].event_type == CoreEventType.ACTION_CHAIN_UPDATED
+        ]
+        assert len(chain_events) == 2
+        assert [event.node["iteration"] for event in chain_events] == [1, 2]
+        assert chain_events[0].node["id"] != chain_events[1].node["id"]
+
+    @pytest.mark.asyncio
+    async def test_room_delivery_context_survives_tool_call_iterations(self) -> None:
+        """最终 conversation 节点没有 user delta 时仍携带 Room 归属。"""
+        from ghrah.abilities.builtin.conversation import ConversationAbility
+
+        agent = _create_agent()
+        agent.register_ability(
+            MockAbility(
+                name="write_file",
+                action_result=ActionResult(
+                    outcome=ActionOutcome.SUCCESS,
+                    data={"bytes_written": 3},
+                ),
+                tool_schema={"type": "function", "function": {"name": "write_file"}},
+            )
+        )
+        agent.register_ability(ConversationAbility())
+        agent._llm = AsyncMock()
+        agent._llm.configure_tools = MagicMock()
+        agent._llm.generate.side_effect = [
+            LLMResponse(
+                content_blocks=[
+                    ToolCallBlock(
+                        id="call-write",
+                        name="write_file",
+                        arguments={"content": "poem"},
+                    )
+                ]
+            ),
+            LLMResponse(content_blocks=[TextBlock(text="已写好。")]),
+        ]
+        publisher = MagicMock()
+        publisher.publish = AsyncMock()
+        agent._event_publisher = publisher
+
+        await agent.receive(
+            Message(
+                sender="user",
+                recipient="test-agent",
+                content="写一首诗",
+                type=MessageType.CHAT,
+                metadata={
+                    "room_id": "room-1",
+                    "project_id": "project-1",
+                    "agent_id": "stable-1",
+                },
+            )
+        )
+
+        chain_events = [
+            call.args[0]
+            for call in publisher.publish.await_args_list
+            if call.args[0].event_type == CoreEventType.ACTION_CHAIN_UPDATED
+        ]
+        assert len(chain_events) == 2
+        assert any(
+            message["role"] == "user"
+            for message in chain_events[0].node["messages_delta"]
+        )
+        assert all(
+            message["role"] != "user"
+            for message in chain_events[1].node["messages_delta"]
+        )
+        assert [
+            event.node["metadata"]["delivery_context"] for event in chain_events
+        ] == [
+            {
+                "room_id": "room-1",
+                "project_id": "project-1",
+                "agent_id": "stable-1",
+            },
+            {
+                "room_id": "room-1",
+                "project_id": "project-1",
+                "agent_id": "stable-1",
+            },
+        ]
 
 
 # ----------------------------------------------------------------
@@ -1289,8 +1298,7 @@ class TestMessageQueue:
 
         # 入队消息并运 drive_loop
         await agent._message_queue.put(ChatMessage.user("hello", source="human"))
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 
@@ -1336,9 +1344,8 @@ class TestMessageQueue:
 
         # 入队初始消息
         await agent._message_queue.put(ChatMessage.user("start", source="human"))
-        cm = agent._context_manager
-        cm.max_iterations = 10
-        cm.reset_iteration()
+        agent._iteration_state.max_iterations = 10
+        agent._iteration_state.reset()
 
         # 在 drive_loop 开始前注入一条消息
         await agent.inject_message(injected_msg)
@@ -1362,6 +1369,35 @@ class TestMessageQueue:
         assert agent._message_queue.empty()
 
     @pytest.mark.asyncio
+    async def test_reset_clears_iteration_state(self) -> None:
+        """reset() 应重置驱动循环状态（iteration/last_action_result/pending_route）。
+
+        回归测试：S1.3 将驱动循环状态从 ContextManager 迁出到
+        ActorAgent._iteration_state 后，reset() 仅重建 ContextManager 不再
+        隐式清掉这些字段，必须在 reset() 中显式重置，否则状态泄漏到下一轮
+        （例如 list_sessions() 的 iteration_count 报告旧值）。
+        """
+        agent = _create_agent(
+            AgentConfig(name="test-agent", max_iterations=7)
+        )
+        # 污染驱动循环状态
+        agent._iteration_state.iteration = 3
+        agent._iteration_state.pending_route = "step2"
+        agent._iteration_state.last_action_result = ActionResult(
+            outcome=ActionOutcome.SUCCESS,
+            data={"response": "stale"},
+        )
+
+        await agent.reset()
+
+        # reset() 必须清零这三个字段
+        assert agent._iteration_state.iteration == 0
+        assert agent._iteration_state.pending_route is None
+        assert agent._iteration_state.last_action_result is None
+        # max_iterations 应从 config 同步（而非残留默认值 10）
+        assert agent._iteration_state.max_iterations == 7
+
+    @pytest.mark.asyncio
     async def test_rollback_preserves_queued_messages(self) -> None:
         """迭代失败回滚时，排空的消息应重新注入队列，防止消息丢失。
 
@@ -1381,8 +1417,7 @@ class TestMessageQueue:
         await agent._message_queue.put(msg1)
         await agent._message_queue.put(msg2)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError, match="Action failed"):
             await agent._drive_loop()
@@ -1412,8 +1447,7 @@ class TestMessageQueue:
         for msg in messages:
             await agent._message_queue.put(msg)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError):
             await agent._drive_loop()
@@ -1435,8 +1469,7 @@ class TestMessageQueue:
         agent._llm = mock_llm
 
         # 不入队任何消息，直接触发 drive_loop
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         with pytest.raises(AgentError, match="Action failed"):
             await agent._drive_loop()
@@ -1462,8 +1495,7 @@ class TestMessageQueue:
         msg = ChatMessage.user("hello", source="human")
         await agent._message_queue.put(msg)
 
-        cm = agent._context_manager
-        cm.reset_iteration()
+        agent._iteration_state.reset()
 
         await agent._drive_loop()
 

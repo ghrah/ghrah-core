@@ -18,7 +18,7 @@
 
 设计要点：
     - 所有节点打包存储在单个 nodes.json(.gz) 文件中
-    - 使用临时文件 + rename 实现原子写入
+    - 使用临时文件 + os.replace 实现原子写入
     - 支持 gzip 压缩（默认开启）
     - 不需要多进程并发安全（actor 模型保证无数据竞争）
     - session 数据存储在 {agent_name}/sessions.json 中
@@ -29,7 +29,9 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import os
 import shutil
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,25 @@ from ghrah.context.session import Session
 logger = logging.getLogger(__name__)
 
 __all__ = ["JsonFileBackend"]
+
+# Windows 上目标文件被 AV/索引器短暂占用时 os.replace 抛 PermissionError，
+# 重试若干次后放弃（与 ghrah.subject._fs._replace_with_retry 同策略）。
+_REPLACE_RETRIES = 5
+_REPLACE_RETRY_DELAY_S = 0.05
+
+
+def _replace_with_retry(src: Path, dst: Path) -> None:
+    """os.replace 原子覆盖；Windows 目标被短暂锁定时重试。"""
+    last_exc: PermissionError | None = None
+    for _ in range(_REPLACE_RETRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(_REPLACE_RETRY_DELAY_S)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _generate_run_id() -> str:
@@ -130,7 +151,7 @@ class JsonFileBackend(PersistenceBackend):
     # ----------------------------------------------------------------
 
     def _write_json(self, path: Path, data: dict[str, Any] | list[Any]) -> None:
-        """原子写入 JSON 文件（先写临时文件再重命名）。
+        """原子写入 JSON 文件（先写临时文件再 os.replace 覆盖）。
 
         Args:
             path: 目标文件路径
@@ -148,7 +169,7 @@ class JsonFileBackend(PersistenceBackend):
             else:
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-            tmp_path.rename(path)  # POSIX 原子操作
+            _replace_with_retry(tmp_path, path)  # 跨平台原子覆盖
         except Exception as e:
             logger.error("Failed to write %s: %s", path, e)
             tmp_path.unlink(missing_ok=True)
@@ -300,7 +321,7 @@ class JsonFileBackend(PersistenceBackend):
 
         注意：此实现遍历所有 agent 目录搜索 session，时间复杂度 O(n)。
         JsonFileBackend 主要用于验证性场合，不适用于生产环境。
-        如需高效按 ID 查询，请使用 SqliteBackend 或 RemoteBackend。
+        如需高效按 ID 查询，请使用 SqliteBackend。
 
         Args:
             session_id: session ID

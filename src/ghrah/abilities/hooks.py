@@ -21,15 +21,17 @@ Hook 在 Agent 执行循环中的特定触发点执行，用于：
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ghrah.abilities.base import ActionResult
     from ghrah.abilities.context import AbilityExecutionContext
+    from ghrah.types.results import ActionResult
 
 __all__ = [
+    "HookScope",
     "HookPoint",
     "HookResult",
     "Hook",
@@ -73,6 +75,41 @@ class HookPoint(str, Enum):
     POST_EXECUTE = "post_execute"
 
 
+@dataclass(frozen=True)
+class HookScope:
+    """Declarative hook scope used by HookStore indexes."""
+
+    points: frozenset[HookPoint]
+    target_abilities: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.points:
+            raise ValueError("HookScope.points must not be empty.")
+        if self.target_abilities == frozenset():
+            raise ValueError("HookScope.target_abilities must be None or non-empty.")
+
+    @classmethod
+    def global_(cls, *points: HookPoint) -> HookScope:
+        """Create a global scope for one or more hook points."""
+
+        return cls(points=frozenset(points))
+
+    @classmethod
+    def for_abilities(
+        cls,
+        points: HookPoint | Iterable[HookPoint],
+        abilities: Iterable[str],
+    ) -> HookScope:
+        """Create a scope targeting named abilities."""
+
+        if isinstance(points, HookPoint):
+            point_set = frozenset({points})
+        else:
+            point_set = frozenset(points)
+        ability_set = frozenset(abilities)
+        return cls(points=point_set, target_abilities=ability_set)
+
+
 @dataclass
 class HookResult:
     """Hook 返回结果。
@@ -89,8 +126,19 @@ class HookResult:
     should_continue: bool = True
     route_to: str | None = None
     modified_context: dict[str, Any] | None = None
+    data_updates: dict[str, Any] | None = None
     message: str | None = None
     requires_hitl: bool = False
+
+    def __post_init__(self) -> None:
+        if self.modified_context is not None and self.data_updates is not None:
+            updates = {**self.modified_context, **self.data_updates}
+            self.modified_context = updates
+            self.data_updates = updates
+        elif self.modified_context is not None:
+            self.data_updates = self.modified_context
+        elif self.data_updates is not None:
+            self.modified_context = self.data_updates
 
     @classmethod
     def continue_(cls) -> HookResult:
@@ -159,6 +207,7 @@ class Hook(ABC):
     """
 
     hook_point: HookPoint
+    scope: HookScope | None = None
 
     @abstractmethod
     async def should_trigger(self, context: AbilityExecutionContext) -> bool:

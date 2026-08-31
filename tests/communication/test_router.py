@@ -12,15 +12,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ghrah.communication.errors import AgentNotFoundError
 from ghrah.communication.registry import AgentRegistry
 from ghrah.communication.router import MessageRouter
 from ghrah.core.config import AgentConfig
 from ghrah.core.exceptions import (
-    AgentNotFoundError,
     CommunicationTimeoutError,
     RoutingError,
 )
-from ghrah.core.message import Message, MessageType
+from ghrah.core.message import AgentMessage as Message
+from ghrah.core.message import MessageType
 
 
 def _make_async_response(response: Message) -> asyncio.coroutines:

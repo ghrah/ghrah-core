@@ -15,11 +15,12 @@ from _helpers import make_action_result
 
 from ghrah.abilities.base import ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
+from ghrah.chat.factory import ChatMessageFactory
 from ghrah.chat.message import ChatMessage
 from ghrah.context.manager import ContextManager
 from ghrah.context.node import ContextNode
 from ghrah.core.config import AgentConfig
-from ghrah.core.message import Message
+from ghrah.core.message import AgentMessage as Message
 
 # ----------------------------------------------------------------
 # 辅助工厂
@@ -33,6 +34,7 @@ def _make_cm(**overrides) -> ContextManager:
         "initial_state": None,
         "snapshot_interval": 5,
         "system_prompt": "",
+        "message_factory": ChatMessageFactory(),
     }
     defaults.update(overrides)
     return ContextManager(**defaults)
@@ -100,7 +102,6 @@ class TestContextManagerIteration:
         cm = _make_cm()
         cm.begin_iteration()
         assert cm.in_iteration is True
-        assert cm.state_manager.in_transaction is True
 
     def test_begin_iteration_twice_raises(self) -> None:
         """重复开启抛 RuntimeError。"""
@@ -556,21 +557,6 @@ class TestContextManagerBuildContext:
         assert isinstance(ctx, AbilityExecutionContext)
         assert ctx.agent_state == {"key": "value"}
         assert ctx.context_manager is cm
-
-    def test_build_execution_context_iteration_from_cm(self) -> None:
-        """iteration 由 ContextManager 管理。"""
-        cm = _make_cm()
-
-        assert cm.iteration == 0
-
-        cm.begin_iteration()
-        cm.commit_iteration(ability_names=["ability_1"])
-        cm.begin_iteration()
-        cm.commit_iteration(ability_names=["ability_2"])
-
-        cm.advance_iteration()
-        cm.advance_iteration()
-        assert cm.iteration == 2
 
 
 # ----------------------------------------------------------------

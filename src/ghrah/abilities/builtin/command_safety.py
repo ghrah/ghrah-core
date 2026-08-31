@@ -24,17 +24,17 @@
 from __future__ import annotations
 
 import logging
-import os
 import shlex
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 
 if TYPE_CHECKING:
-    from ghrah.abilities.base import ActionResult
     from ghrah.abilities.context import AbilityExecutionContext
+    from ghrah.types.results import ActionResult
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +287,7 @@ class CommandSafetyChecker:
         if not parts:
             return "", None
 
-        base = os.path.basename(parts[0])
+        base = Path(parts[0]).name
 
         sub_cmd: str | None = None
         for i in range(1, len(parts)):

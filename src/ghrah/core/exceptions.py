@@ -2,13 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""自定义异常层次结构"""
+"""核心异常层次结构 — core 领域异常 + 延迟 re-export 各子领域异常。
 
+已迁移到领域模块的异常通过 __getattr__ 延迟 re-export，
+避免 core.exceptions ↔ 各领域 errors 模块的循环依赖。
+旧 import 路径 `from ghrah.core.exceptions import LLMError` 仍然可用。
+"""
 
-class ActorAgentError(Exception):
-    """Actor-Agent 框架基础异常"""
+from __future__ import annotations
 
-    pass
+from ghrah.core._base_error import ActorAgentError
 
 
 class AgentError(ActorAgentError):
@@ -33,40 +36,12 @@ class AgentTimeoutError(AgentError):
         super().__init__(agent_name, f"Operation timed out after {timeout}s")
 
 
-class LLMError(ActorAgentError):
-    """LLM 调用相关错误"""
-
-    def __init__(self, provider: str, message: str):
-        self.provider = provider
-        super().__init__(f"LLM[{provider}]: {message}")
-
-
-class MessageError(ActorAgentError):
-    """消息处理错误"""
-
-    pass
-
-
 class ToolError(ActorAgentError):
     """工具执行错误"""
 
     def __init__(self, tool_name: str, message: str):
         self.tool_name = tool_name
         super().__init__(f"Tool[{tool_name}]: {message}")
-
-
-class RegistryError(ActorAgentError):
-    """Agent 注册/发现相关错误"""
-
-    pass
-
-
-class AgentNotFoundError(RegistryError):
-    """Agent 未在注册中心找到"""
-
-    def __init__(self, agent_name: str):
-        self.agent_name = agent_name
-        super().__init__(f"Agent not found: {agent_name}")
 
 
 class RoutingError(ActorAgentError):
@@ -82,22 +57,9 @@ class CommunicationTimeoutError(ActorAgentError):
         self.sender = sender
         self.recipient = recipient
         self.timeout = timeout
-        super().__init__(f"Communication timeout: {sender} -> {recipient} after {timeout}s")
-
-
-class AbilityError(ActorAgentError):
-    """Ability 执行相关错误"""
-
-    def __init__(self, ability_name: str, message: str):
-        self.ability_name = ability_name
-        super().__init__(f"Ability[{ability_name}]: {message}")
-
-
-class AbilityNotFoundError(AbilityError):
-    """Ability 未找到"""
-
-    def __init__(self, ability_name: str):
-        super().__init__(ability_name, f"Ability not found: {ability_name}")
+        super().__init__(
+            f"Communication timeout: {sender} -> {recipient} after {timeout}s"
+        )
 
 
 class HookError(ActorAgentError):
@@ -106,3 +68,21 @@ class HookError(ActorAgentError):
     def __init__(self, hook_point: str, message: str):
         self.hook_point = hook_point
         super().__init__(f"Hook[{hook_point}]: {message}")
+
+
+_RE_EXPORTS = {
+    "LLMError": "ghrah.llm.errors",
+    "RegistryError": "ghrah.communication.errors",
+    "AgentNotFoundError": "ghrah.communication.errors",
+    "AbilityError": "ghrah.abilities.errors",
+    "AbilityNotFoundError": "ghrah.abilities.errors",
+}
+
+
+def __getattr__(name: str) -> type:
+    if name in _RE_EXPORTS:
+        import importlib
+
+        module = importlib.import_module(_RE_EXPORTS[name])
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

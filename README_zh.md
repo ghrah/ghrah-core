@@ -14,14 +14,39 @@
 uv sync
 ```
 
-### 配置Agentconf
+### (推荐) 配置 Agentconf
 
-使用Agentconf的TUI配置你的LLM供应商、模型、Agent
-
+使用 Agentconf 的 TUI 配置你的 LLM 供应商、模型、Agent
 
 ```bash
 uv run agentconf
 ```
+
+### 直接配置（无需 agentconf）
+
+如果不使用 agentconf，可以直接构造 `ChatFormat` 并注入到 Agent 中：
+
+```python
+from ghrah.abilities.builtin.conversation import ConversationAbility
+from ghrah.agents.base import ActorAgent
+from ghrah.chat.format.openai import OpenAIFormat
+from ghrah.core.config import AgentConfig
+
+config = AgentConfig(name="assistant", system_prompt="你是一个 AI 助手。")
+agent = ActorAgent(config)
+agent.register_ability(ConversationAbility())
+
+# 直接构造 ChatFormat 并注入（跳过 agentconf，这是一种变通，后续会改进）
+agent._llm = OpenAIFormat(
+    model="gpt-4o",
+    api_key="sk-your-api-key",
+    base_url="https://api.openai.com/v1",
+)
+
+response = await agent.chat("你好！")
+```
+
+支持的 `ChatFormat` 子类：`OpenAIFormat`、`AnthropicFormat`、`DeepSeekFormat`。详见 [配置参考](docs/configuration.md)。
 
 ### 运行示例
 
@@ -35,7 +60,7 @@ uv run python examples/simple_chat.py
 
 ```
 src/ghrah/
-├── core/           # 核心抽象：配置、消息、事件、异常、HITL、CommandSender
+├── core/           # 核心抽象：配置、消息、事件、异常、HITL
 ├── agents/         # Agent 实现：ActorAgent 基类
 ├── chat/           # LLM 交互层：ChatMessage、ContentBlock、ChatFormat
 │   └── format/     # 格式适配器：OpenAIFormat、AnthropicFormat

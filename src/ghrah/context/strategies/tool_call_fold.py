@@ -16,9 +16,13 @@
 
 from __future__ import annotations
 
-from ghrah.chat.content import ContentBlock, ToolResultBlock
-from ghrah.chat.message import ChatMessage
+from typing import TYPE_CHECKING
+
 from ghrah.context.window import WindowStrategy
+from ghrah.core.window_protocol import MessageFactory, WindowableMessage
+
+if TYPE_CHECKING:
+    from ghrah.core.window_protocol import WindowableBlock
 
 __all__ = ["ToolCallFoldStrategy"]
 
@@ -33,7 +37,7 @@ class ToolCallFoldStrategy(WindowStrategy):
     """ToolCall 折叠策略 — 压缩冗长的工具调用返回。
 
     行为：
-    - 识别 role="tool" 消息中的 ToolResultBlock，如果 content 超过阈值，截断并添加省略标记
+    - 识别 role="tool" 消息中 content 过长的 ToolResultBlock，截断并添加省略标记
     - AI 消息的 tool_calls 保持不变
     - 不改变消息数量，只压缩单条消息体积
 
@@ -41,19 +45,25 @@ class ToolCallFoldStrategy(WindowStrategy):
 
     Args:
         max_content_length: ToolResultBlock content 的最大字符长度，默认 500
+        message_factory: 消息构造工厂，用于构造折叠后的新消息
     """
 
-    def __init__(self, max_content_length: int = _DEFAULT_MAX_CONTENT_LENGTH) -> None:
+    def __init__(
+        self,
+        max_content_length: int = _DEFAULT_MAX_CONTENT_LENGTH,
+        message_factory: MessageFactory | None = None,
+    ) -> None:
         if max_content_length <= 0:
             raise ValueError(f"max_content_length must be positive, got {max_content_length}")
         self._max_content_length = max_content_length
+        self._message_factory = message_factory
 
     @property
     def max_content_length(self) -> int:
         """最大 content 长度。"""
         return self._max_content_length
 
-    async def apply(self, messages: list[ChatMessage], token_budget: int) -> list[ChatMessage]:
+    async def apply(self, messages: list[WindowableMessage], token_budget: int) -> list[WindowableMessage]:
         """应用 ToolCall 折叠策略。
 
         Args:
@@ -63,7 +73,7 @@ class ToolCallFoldStrategy(WindowStrategy):
         Returns:
             折叠后的消息列表
         """
-        result: list[ChatMessage] = []
+        result: list[WindowableMessage] = []
         for msg in messages:
             if msg.role == "tool":
                 folded = self._fold_tool_message(msg)
@@ -72,40 +82,43 @@ class ToolCallFoldStrategy(WindowStrategy):
                 result.append(msg)
         return result
 
-    def _fold_tool_message(self, msg: ChatMessage) -> ChatMessage:
+    def _fold_tool_message(self, msg: WindowableMessage) -> WindowableMessage:
         """折叠 role="tool" 消息中的 ToolResultBlock。
 
         如果 content 超过 max_content_length，截断并添加省略标记。
 
         Args:
-            msg: 原始 ChatMessage (role="tool")
+            msg: 原始 WindowableMessage (role="tool")
 
         Returns:
-            折叠后的 ChatMessage（如果需要折叠），或原始消息
+            折叠后的 WindowableMessage（如果需要折叠），或原始消息
         """
         needs_fold = False
         for block in msg.content_blocks:
-            if isinstance(block, ToolResultBlock) and len(block.content) > self._max_content_length:
+            if getattr(block, "type", None) == "tool_result" and len(getattr(block, "content", "")) > self._max_content_length:
                 needs_fold = True
                 break
 
         if not needs_fold:
             return msg
 
-        new_blocks: list[ContentBlock] = []
+        if self._message_factory is None:
+            return msg
+
+        new_blocks: list[WindowableBlock] = []
         for block in msg.content_blocks:
-            if isinstance(block, ToolResultBlock):
-                content = block.content
+            if getattr(block, "type", None) == "tool_result":
+                content = getattr(block, "content", "")
                 if len(content) > self._max_content_length:
                     suffix = _TRUNCATION_SUFFIX.format(length=len(content))
                     truncated_content = content[: self._max_content_length] + suffix
                     new_blocks.append(
-                        ToolResultBlock(
-                            tool_call_id=block.tool_call_id,
-                            name=block.name,
+                        self._message_factory.create_tool_result_block(
+                            tool_call_id=getattr(block, "tool_call_id", ""),
+                            name=getattr(block, "name", None),
                             content=truncated_content,
-                            success=block.success,
-                            error=block.error,
+                            success=getattr(block, "success", True),
+                            error=getattr(block, "error", None),
                         )
                     )
                 else:
@@ -113,7 +126,7 @@ class ToolCallFoldStrategy(WindowStrategy):
             else:
                 new_blocks.append(block)
 
-        return ChatMessage(
+        return self._message_factory.create_message(
             role=msg.role,
             content_blocks=new_blocks,
             source=msg.source,

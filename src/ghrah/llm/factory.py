@@ -30,7 +30,7 @@ from typing import Any
 from agentconf import ProviderType
 
 from ghrah.chat.format import ChatFormat
-from ghrah.core.exceptions import LLMError
+from ghrah.llm.errors import LLMError
 
 logger = logging.getLogger(__name__)
 

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ghrah.chat.content import TextBlock, ToolCallBlock
+from ghrah.chat.factory import ChatMessageFactory
 from ghrah.chat.format import ChatFormat, LLMResponse
 from ghrah.chat.message import ChatMessage
 from ghrah.context.strategies.llm_summary import LLMSummaryStrategy
@@ -270,7 +271,7 @@ class TestToolCallFoldStrategy:
     async def test_short_tool_message_not_folded(self) -> None:
         """短 ToolMessage 不被折叠。"""
         msgs = [_tool("short result")]
-        strategy = ToolCallFoldStrategy(max_content_length=500)
+        strategy = ToolCallFoldStrategy(max_content_length=500, message_factory=ChatMessageFactory())
         result = await strategy.apply(msgs, token_budget=10000)
         assert len(result) == 1
         assert result[0].tool_results[0].content == "short result"
@@ -280,7 +281,7 @@ class TestToolCallFoldStrategy:
         """长 ToolMessage 被截断并添加标记。"""
         long_content = _long_content(1000)
         msgs = [_tool(long_content)]
-        strategy = ToolCallFoldStrategy(max_content_length=100)
+        strategy = ToolCallFoldStrategy(max_content_length=100, message_factory=ChatMessageFactory())
         result = await strategy.apply(msgs, token_budget=10000)
         assert len(result) == 1
         assert len(result[0].tool_results[0].content) < len(long_content)
@@ -291,7 +292,7 @@ class TestToolCallFoldStrategy:
     async def test_fold_preserves_tool_call_id(self) -> None:
         """折叠后 tool_call_id 保持不变。"""
         msgs = [_tool(_long_content(1000), tool_call_id="call_abc123")]
-        strategy = ToolCallFoldStrategy(max_content_length=100)
+        strategy = ToolCallFoldStrategy(max_content_length=100, message_factory=ChatMessageFactory())
         result = await strategy.apply(msgs, token_budget=10000)
         assert result[0].tool_results[0].tool_call_id == "call_abc123"
 
@@ -299,7 +300,7 @@ class TestToolCallFoldStrategy:
     async def test_fold_preserves_name(self) -> None:
         """折叠后 name 保持不变。"""
         msgs = [_tool(_long_content(1000), tool_call_id="tc1", name="read_file")]
-        strategy = ToolCallFoldStrategy(max_content_length=100)
+        strategy = ToolCallFoldStrategy(max_content_length=100, message_factory=ChatMessageFactory())
         result = await strategy.apply(msgs, token_budget=10000)
         assert result[0].tool_results[0].name == "read_file"
 
@@ -313,7 +314,7 @@ class TestToolCallFoldStrategy:
         )
         tool_msg = _tool(_long_content(1000), tool_call_id="tc1")
         msgs = [ai_msg, tool_msg]
-        strategy = ToolCallFoldStrategy(max_content_length=100)
+        strategy = ToolCallFoldStrategy(max_content_length=100, message_factory=ChatMessageFactory())
         result = await strategy.apply(msgs, token_budget=10000)
         assert result[0].tool_calls == ai_msg.tool_calls
         assert "truncated" in result[1].tool_results[0].content
@@ -328,7 +329,7 @@ class TestToolCallFoldStrategy:
             _ai("calling another"),
             _tool(_long_content(1000)),
         ]
-        strategy = ToolCallFoldStrategy(max_content_length=100)
+        strategy = ToolCallFoldStrategy(max_content_length=100, message_factory=ChatMessageFactory())
         result = await strategy.apply(msgs, token_budget=10000)
         assert len(result) == 5
         assert result[2].tool_results[0].content == "short"
@@ -339,7 +340,7 @@ class TestToolCallFoldStrategy:
         """不修改原始消息列表。"""
         msgs = [_tool(_long_content(1000))]
         original_content = msgs[0].tool_results[0].content
-        strategy = ToolCallFoldStrategy(max_content_length=100)
+        strategy = ToolCallFoldStrategy(max_content_length=100, message_factory=ChatMessageFactory())
         await strategy.apply(msgs, token_budget=10000)
         assert msgs[0].tool_results[0].content == original_content
 
@@ -349,6 +350,17 @@ class TestToolCallFoldStrategy:
         strategy = ToolCallFoldStrategy()
         result = await strategy.apply([], token_budget=10000)
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_fold_without_factory_returns_original(self) -> None:
+        """没有 message_factory 时，长 ToolMessage 不被折叠（返回原始消息）。"""
+        long_content = _long_content(1000)
+        msgs = [_tool(long_content)]
+        strategy = ToolCallFoldStrategy(max_content_length=100, message_factory=None)
+        result = await strategy.apply(msgs, token_budget=10000)
+        assert len(result) == 1
+        # 没有 factory，消息未被修改（返回原始对象）
+        assert result[0] is msgs[0]
 
 
 # ----------------------------------------------------------------
@@ -364,7 +376,7 @@ class TestLLMSummaryStrategy:
         """策略名称。"""
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock()
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
         assert strategy.name == "llm_summary"
 
     @pytest.mark.asyncio
@@ -372,7 +384,7 @@ class TestLLMSummaryStrategy:
         """消息在预算内时不生成摘要。"""
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock()
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
         msgs = [_human("short")]
         result = await strategy.apply(msgs, token_budget=10000)
         assert result == msgs
@@ -382,12 +394,12 @@ class TestLLMSummaryStrategy:
     async def test_generates_summary_for_old_messages(self) -> None:
         """超出预算时对旧消息生成摘要。"""
         mock_response = LLMResponse(
-            content_blocks=[TextBlock(text="This is a summary of the conversation.")]
+            content_blocks=[TextBlock(text="This is a summary of the conversation.")],
         )
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock(return_value=mock_response)
 
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
 
         msgs = [_human(f"Message {i} " + "x" * 100) for i in range(20)]
         budget = 200
@@ -406,7 +418,7 @@ class TestLLMSummaryStrategy:
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock(return_value=mock_response)
 
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
 
         msgs = [_human(f"Message {i} " + "x" * 100) for i in range(20)]
         budget = 500
@@ -423,7 +435,7 @@ class TestLLMSummaryStrategy:
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock(return_value=mock_response)
 
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
         msgs = [_human(f"Msg {i} " + "x" * 100) for i in range(20)]
         budget = 200
 
@@ -439,7 +451,7 @@ class TestLLMSummaryStrategy:
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock(side_effect=Exception("LLM unavailable"))
 
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
 
         msgs = [_human(f"Msg {i} " + "x" * 100) for i in range(20)]
         budget = 500
@@ -454,7 +466,7 @@ class TestLLMSummaryStrategy:
         """没有旧消息时不生成摘要。"""
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock()
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
 
         msgs = [_human("short")]
         await strategy.apply(msgs, token_budget=10000)
@@ -465,7 +477,7 @@ class TestLLMSummaryStrategy:
         """空消息列表返回空列表。"""
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock()
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
         result = await strategy.apply([], token_budget=100)
         assert result == []
         llm.generate.assert_not_called()
@@ -473,7 +485,7 @@ class TestLLMSummaryStrategy:
     def test_custom_summary_prompt(self) -> None:
         """自定义摘要提示词。"""
         llm = MagicMock(spec=ChatFormat)
-        strategy = LLMSummaryStrategy(llm=llm, summary_prompt="自定义摘要提示")
+        strategy = LLMSummaryStrategy(llm=llm, summary_prompt="自定义摘要提示", message_factory=ChatMessageFactory())
         assert strategy.summary_prompt == "自定义摘要提示"
 
     @pytest.mark.asyncio
@@ -483,7 +495,7 @@ class TestLLMSummaryStrategy:
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock(return_value=mock_response)
 
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
         msgs = [_human(f"Msg {i} " + "x" * 100) for i in range(20)]
         original_len = len(msgs)
         await strategy.apply(msgs, token_budget=200)
@@ -496,7 +508,7 @@ class TestLLMSummaryStrategy:
         llm = MagicMock(spec=ChatFormat)
         llm.generate = AsyncMock(return_value=mock_response)
 
-        strategy = LLMSummaryStrategy(llm=llm)
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=ChatMessageFactory())
         msgs = [_sys("system prompt")] + [_human(f"Msg {i} " + "x" * 100) for i in range(20)]
         budget = 300
 
@@ -504,3 +516,19 @@ class TestLLMSummaryStrategy:
 
         sys_msgs = [m for m in result if m.role == "system" and m.text == "system prompt"]
         assert len(sys_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_factory_no_summary(self) -> None:
+        """没有 message_factory 时，即使超出预算也跳过摘要（返回截断结果）。"""
+        llm = MagicMock(spec=ChatFormat)
+        llm.generate = AsyncMock()
+        strategy = LLMSummaryStrategy(llm=llm, message_factory=None)
+
+        msgs = [_human(f"Msg {i} " + "x" * 100) for i in range(20)]
+        budget = 500
+
+        result = await strategy.apply(msgs, token_budget=budget)
+
+        # 没有 factory，摘要生成失败，回退到截断
+        assert len(result) < len(msgs)
+        llm.generate.assert_not_called()

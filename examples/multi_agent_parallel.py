@@ -52,7 +52,7 @@ from ghrah.abilities.builtin import (
     WriteFileAbility,
 )
 from ghrah.communication import SupervisorActor
-from ghrah.core.config import AgentConfig, ContextConfig
+from ghrah.types.config_types import AgentConfig, ContextConfig
 
 logging.basicConfig(
     level=logging.INFO,

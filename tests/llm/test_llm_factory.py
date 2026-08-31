@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from agentconf import ProviderType
 
-from ghrah.core.exceptions import LLMError
+from ghrah.llm.errors import LLMError
 from ghrah.llm.factory import LLMFactory, _get_secret_value
 
 

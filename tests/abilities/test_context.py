@@ -41,7 +41,6 @@ class TestAbilityExecutionContext:
         assert ctx.last_action_result is None
         assert ctx.agent_state == {}
         assert ctx.context_manager is None
-        assert ctx.current_node_id is None
 
     def test_custom_values(self) -> None:
         ctx = _make_context(

@@ -38,12 +38,12 @@ from ghrah.abilities.builtin import (
     ReadFileAbility,
     WriteFileAbility,
 )
-from ghrah.core.config import AgentConfig
 from ghrah.manifest.agent import AgentManifest
 from ghrah.manifest.parser import parse_agent_manifest
 from ghrah.manifest.resolver import ManifestResolver, ResolvedAbility, ResolvedAgent
 from ghrah.manifest.store import BuiltinManifestStore
 from ghrah.manifest.types import PermissionFlags
+from ghrah.types.config_types import AgentConfig
 
 logger = logging.getLogger(__name__)
 

@@ -5,5 +5,6 @@
 """Agent 实现层"""
 
 from ghrah.agents.base import ActorAgent
+from ghrah.agents.builder import AgentBuilder
 
-__all__ = ["ActorAgent"]
+__all__ = ["ActorAgent", "AgentBuilder"]

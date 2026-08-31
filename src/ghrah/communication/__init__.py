@@ -10,13 +10,16 @@
 - SupervisorActor: Agent 生命周期管理和系统入口
 """
 
+from ghrah.communication.errors import AgentNotFoundError, RegistryError
 from ghrah.communication.registry import AgentInfo, AgentRegistry
 from ghrah.communication.router import MessageRouter
 from ghrah.communication.supervisor import SupervisorActor
 
 __all__ = [
+    "AgentNotFoundError",
     "AgentInfo",
     "AgentRegistry",
     "MessageRouter",
+    "RegistryError",
     "SupervisorActor",
 ]

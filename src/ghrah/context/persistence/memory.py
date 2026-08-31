@@ -114,6 +114,50 @@ class InMemoryBackend(PersistenceBackend):
         for sid in session_ids:
             self._sessions.pop(sid, None)
 
+    async def replace_snapshot(
+        self,
+        *,
+        agent_name: str,
+        nodes: list[ContextNode],
+        sessions: list[Session],
+        branches: dict[str, str],
+        current_state: dict[str, Any],
+        active_session_id: str,
+        messages: list[Any],
+    ) -> None:
+        """以临时副本原子替换单 Agent checkpoint（测试语义对齐 SQLite）。"""
+        next_nodes = dict(self._nodes)
+        for node_id in self._agent_nodes.get(agent_name, []):
+            next_nodes.pop(node_id, None)
+        next_agent_nodes = dict(self._agent_nodes)
+        next_agent_nodes[agent_name] = [node.id for node in nodes]
+        for node in nodes:
+            next_nodes[node.id] = node
+
+        next_sessions = dict(self._sessions)
+        for session_id in self._agent_sessions.get(agent_name, []):
+            next_sessions.pop(session_id, None)
+        next_agent_sessions = dict(self._agent_sessions)
+        next_agent_sessions[agent_name] = [session.session_id for session in sessions]
+        for session in sessions:
+            next_sessions[session.session_id] = session
+
+        next_meta = dict(self._chain_meta)
+        next_meta[agent_name] = {
+            "branches": dict(branches),
+            "active_session_id": active_session_id,
+            "current_state": copy.deepcopy(current_state),
+        }
+        next_messages = dict(self._messages)
+        next_messages[agent_name] = copy.deepcopy(messages)
+
+        self._nodes = next_nodes
+        self._agent_nodes = next_agent_nodes
+        self._sessions = next_sessions
+        self._agent_sessions = next_agent_sessions
+        self._chain_meta = next_meta
+        self._messages = next_messages
+
     async def list_agents(self) -> list[str]:
         """列出所有有数据的 agent。"""
         all_agents: set[str] = set()

@@ -4,12 +4,12 @@ metadata:
   namespace: ghrah.cluster
   name: send_message
   title: Send Message
-  description: Send a message to a specific agent in the cluster and wait for its response. Use this for direct point-to-point communication between agents.
+  description: Send a message to a specific agent in the cluster. By default sends asynchronously (fire_and_forget=true); set fire_and_forget=false to wait for the reply synchronously.
   tags: [cluster, communication]
   permissions: {}
 tool:
   name: send_message
-  description: Send a message to a specific agent in the cluster and wait for its response. Use this for direct point-to-point communication between agents.
+  description: Send a message to a specific agent in the cluster. By default (fire_and_forget=true), sends asynchronously — the calling agent continues immediately and the reply arrives in the next iteration. Set fire_and_forget=false to wait for the reply synchronously.
   parameters:
     target:
       type: string
@@ -19,6 +19,10 @@ tool:
       type: string
       description: Message content to send
       required: true
+    fire_and_forget:
+      type: boolean
+      description: If true (default), send message asynchronously — the calling agent continues immediately and the reply arrives in the next iteration. If false, wait for the reply synchronously.
+      required: false
 implementation:
   type: builtin
   handler: send_message

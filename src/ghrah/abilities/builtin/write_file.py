@@ -20,13 +20,14 @@
 from __future__ import annotations
 
 import logging
-import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
@@ -64,8 +65,8 @@ class WriteFileAbility(Ability):
         ability = WriteFileAbility(permission_checker=checker)
 
         # 带人工批准 Hook
-        from ghrah.abilities.builtin.fs_permissions import WriteApprovalHook
-        hook = WriteApprovalHook(checker)
+        from ghrah.abilities.builtin.fs_permissions import AccessApprovalHook
+        hook = AccessApprovalHook(checker)
         ability = WriteFileAbility(
             permission_checker=checker,
             hooks=[hook],
@@ -144,12 +145,11 @@ class WriteFileAbility(Ability):
         try:
             # 创建父目录
             if create_dirs:
-                parent = os.path.dirname(os.path.abspath(file_path))
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
+                parent = Path(file_path).resolve().parent
+                parent.mkdir(parents=True, exist_ok=True)
 
             # 写入文件
-            with open(file_path, "w", encoding=encoding) as f:
+            with Path(file_path).open("w", encoding=encoding) as f:
                 f.write(content)
 
             bytes_written = len(content.encode(encoding))

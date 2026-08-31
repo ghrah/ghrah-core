@@ -37,7 +37,9 @@ from ghrah.chat.content import (
     ToolResultBlock,
     block_from_dict,
     block_to_dict,
+    blocks_from_dicts,
 )
+from ghrah.chat.factory import ChatMessageFactory
 from ghrah.chat.format import ChatFormat, LLMResponse, TokenUsage
 from ghrah.chat.message import ChatMessage
 from ghrah.chat.response import (
@@ -67,6 +69,8 @@ __all__ = [
     "block_to_dict",
     # Message
     "ChatMessage",
+    # Factory
+    "ChatMessageFactory",
     # Format
     "ChatFormat",
     "LLMResponse",

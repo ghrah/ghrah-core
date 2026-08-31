@@ -7,7 +7,7 @@
 测试 AbilityExecutor 接口和 LocalAbilityExecutor 实现：
 - execute_ability: 单个 Ability 执行（含 PRE/POST_EXECUTE Hook）
 - execute_tool_calls: 多个 tool_calls 并行执行
-- run_hooks: Hook 运行机制
+- HookRunner: Hook 运行机制
 - handle_hitl_hook_result: HITL 审批流程
 - receive_hitl_response: 外部 HITL 结果接收
 """
@@ -20,6 +20,7 @@ import pytest
 from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.executor import AbilityExecutor, LocalAbilityExecutor
+from ghrah.abilities.hook_context import HookContext
 from ghrah.abilities.hooks import Hook, HookPoint, HookResult
 from ghrah.chat.content import ToolCallBlock
 from ghrah.core.event_publisher import EventPublisher, NullEventPublisher
@@ -154,7 +155,7 @@ class TestLocalAbilityExecutor:
         """测试默认初始化。"""
         executor = LocalAbilityExecutor(agent_name="test-agent")
         assert executor._agent_name == "test-agent"
-        assert executor._hooks == []
+        assert executor._hook_store.list_all() == []
         assert isinstance(executor._event_publisher, NullEventPublisher)
         assert executor._hitl_timeout == 300.0
 
@@ -162,16 +163,16 @@ class TestLocalAbilityExecutor:
         """测试带 hooks 初始化。"""
         hook = BlockingHook()
         executor = LocalAbilityExecutor(agent_name="test-agent", hooks=[hook])
-        assert len(executor._hooks) == 1
+        assert len(executor._hook_store.list_all()) == 1
 
     def test_update_hooks(self):
         """测试 update_hooks 方法。"""
         executor = LocalAbilityExecutor(agent_name="test-agent")
-        assert executor._hooks == []
+        assert executor._hook_store.list_all() == []
 
         hook = BlockingHook()
         executor.update_hooks([hook])
-        assert len(executor._hooks) == 1
+        assert executor._hook_store.list_all() == [hook]
 
     def test_update_event_publisher(self):
         """测试 update_event_publisher 方法。"""
@@ -314,7 +315,6 @@ class TestLocalAbilityExecutor:
         # 创建 mock ContextManager
         mock_cm = MagicMock()
         mock_cm.get_current_state.return_value = {}
-        mock_cm.last_action_result = None
 
         tool_calls = [
             ToolCallBlock(name="mock_ability", arguments={"key": "value"}, id="call_123"),
@@ -325,6 +325,7 @@ class TestLocalAbilityExecutor:
             abilities={"mock_ability": ability},
             accumulated_data={},
             context_manager=mock_cm,
+            last_action_result=None,
         )
 
         assert len(results) == 1
@@ -339,7 +340,6 @@ class TestLocalAbilityExecutor:
 
         mock_cm = MagicMock()
         mock_cm.get_current_state.return_value = {}
-        mock_cm.last_action_result = None
 
         tool_calls = [
             ToolCallBlock(name="unknown_ability", arguments={}, id="call_456"),
@@ -350,6 +350,7 @@ class TestLocalAbilityExecutor:
             abilities={},
             accumulated_data={},
             context_manager=mock_cm,
+            last_action_result=None,
         )
 
         assert len(results) == 1
@@ -366,7 +367,6 @@ class TestLocalAbilityExecutor:
 
         mock_cm = MagicMock()
         mock_cm.get_current_state.return_value = {}
-        mock_cm.last_action_result = None
 
         tool_calls = [
             ToolCallBlock(name="ability_a", arguments={}, id="call_1"),
@@ -385,8 +385,8 @@ class TestLocalAbilityExecutor:
         assert ability_names == {"ability_a", "ability_b"}
 
     @pytest.mark.asyncio
-    async def test_run_hooks_no_hooks(self):
-        """测试没有 Hook 时的 run_hooks。"""
+    async def test_hook_runner_no_hooks(self):
+        """测试没有 Hook 时的 HookRunner。"""
         executor = LocalAbilityExecutor(agent_name="test-agent")
 
         context = AbilityExecutionContext(
@@ -395,11 +395,13 @@ class TestLocalAbilityExecutor:
             agent_state={},
         )
 
-        result = await executor.run_hooks(HookPoint.PRE_EXECUTE, context)
+        result = await executor._hook_runner.run(
+            HookContext.from_ability_context(HookPoint.PRE_EXECUTE, context)
+        )
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_run_hooks_with_matching_hook(self):
+    async def test_hook_runner_with_matching_hook(self):
         """测试匹配触发点的 Hook。"""
         hook = ModifyingHook()
         executor = LocalAbilityExecutor(agent_name="test-agent", hooks=[hook])
@@ -411,12 +413,14 @@ class TestLocalAbilityExecutor:
             accumulated_data={},
         )
 
-        result = await executor.run_hooks(HookPoint.PRE_EXECUTE, context)
+        result = await executor._hook_runner.run(
+            HookContext.from_ability_context(HookPoint.PRE_EXECUTE, context)
+        )
         assert result is not None
         assert result.modified_context == {"hook_modified": True}
 
     @pytest.mark.asyncio
-    async def test_run_hooks_with_non_matching_point(self):
+    async def test_hook_runner_with_non_matching_point(self):
         """测试不匹配触发点的 Hook 不执行。"""
         hook = ModifyingHook()  # PRE_EXECUTE
         executor = LocalAbilityExecutor(agent_name="test-agent", hooks=[hook])
@@ -428,11 +432,13 @@ class TestLocalAbilityExecutor:
             accumulated_data={},
         )
 
-        result = await executor.run_hooks(HookPoint.POST_EXECUTE, context)
+        result = await executor._hook_runner.run(
+            HookContext.from_ability_context(HookPoint.POST_EXECUTE, context)
+        )
         assert result is None  # PRE_EXECUTE hook 不应在 POST_EXECUTE 触发
 
     @pytest.mark.asyncio
-    async def test_run_hooks_merge_multiple(self):
+    async def test_hook_runner_merge_multiple(self):
         """测试多个 Hook 结果合并。"""
         hook1 = ModifyingHook()
         hook2 = PostExecuteHook()
@@ -447,7 +453,9 @@ class TestLocalAbilityExecutor:
 
         # 两个 PRE_EXECUTE Hook 应该合并结果
         # 但 PostExecuteHook 的 hook_point 是 POST_EXECUTE，不会触发
-        result = await executor.run_hooks(HookPoint.PRE_EXECUTE, context)
+        result = await executor._hook_runner.run(
+            HookContext.from_ability_context(HookPoint.PRE_EXECUTE, context)
+        )
         assert result is not None
         assert result.modified_context == {"hook_modified": True}
 

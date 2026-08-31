@@ -101,7 +101,7 @@ coder_response = await supervisor.send("coder", "Write code based on the followi
 # Broadcast to all registered Agents
 responses = await supervisor.broadcast("Hello everyone, project starts!")
 for resp in responses:
-    print(f"{resp.sender}: {resp.content}")
+    print(f"{resp['responder']}: {resp['content']}")
 ```
 
 ### Health Check

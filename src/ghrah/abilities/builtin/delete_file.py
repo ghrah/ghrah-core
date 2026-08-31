@@ -20,13 +20,14 @@
 from __future__ import annotations
 
 import logging
-import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from ghrah.abilities.base import Ability, ActionOutcome, ActionResult
+from ghrah.abilities.base import Ability
 from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
+from ghrah.types.results import ActionOutcome, ActionResult
 
 if TYPE_CHECKING:
     from ghrah.abilities.context import AbilityExecutionContext
@@ -124,13 +125,13 @@ class DeleteFileAbility(Ability):
         logger.debug(f"DeleteFileAbility: deleting {file_path}")
 
         try:
-            if not os.path.exists(file_path):
+            if not Path(file_path).exists():
                 return ActionResult(
                     outcome=ActionOutcome.FAILURE,
                     data={"error": f"File not found: {file_path}"},
                 )
 
-            os.remove(file_path)
+            Path(file_path).unlink()
 
             logger.debug(f"DeleteFileAbility: deleted {file_path}")
 

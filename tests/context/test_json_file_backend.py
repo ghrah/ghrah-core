@@ -23,6 +23,7 @@ import pytest
 from _helpers import make_action_result, make_node
 
 from ghrah.abilities.base import ActionOutcome, ActionResult
+from ghrah.chat.factory import ChatMessageFactory
 from ghrah.chat.message import ChatMessage
 from ghrah.context.persistence import (
     JsonFileBackend,
@@ -533,7 +534,7 @@ class TestJsonFileBackendWithContextManager:
         await cm2.restore("test-agent")
 
         assert cm2.chain.node_count == 4
-        assert cm2.state_manager.current.get("step") == 3
+        assert cm2.get_current_state().get("step") == 3
         assert cm2.message_store.count >= 3
 
     @pytest.mark.asyncio
@@ -579,6 +580,7 @@ class TestJsonFileBackendWithContextManager:
             agent_name="test-agent",
             system_prompt="You are a helper.",
             persistence=backend,
+            message_factory=ChatMessageFactory(),
         )
 
         messages_to_add = [

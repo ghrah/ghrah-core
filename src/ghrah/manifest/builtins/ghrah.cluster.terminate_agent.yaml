@@ -1,0 +1,20 @@
+manifest: ability
+version: "1"
+metadata:
+  namespace: ghrah.cluster
+  name: terminate_agent
+  title: Terminate Agent
+  description: Terminate an agent in the cluster. The agent will be removed and cannot receive further messages. Only use this when you are certain the agent is no longer needed.
+  tags: [cluster, lifecycle]
+  permissions: {}
+tool:
+  name: terminate_agent
+  description: Terminate an agent in the cluster. The agent will be removed and cannot receive further messages. Only use this when you are certain the agent is no longer needed. Persistent agents can receive follow-up messages without re-initialization.
+  parameters:
+    agent_name:
+      type: string
+      description: Name of the agent to terminate
+      required: true
+implementation:
+  type: builtin
+  handler: terminate_agent

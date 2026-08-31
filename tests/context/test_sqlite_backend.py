@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -398,6 +399,41 @@ class TestSqliteBackendBatch:
     async def test_save_nodes_batch_empty(self, sqlite_backend: SqliteBackend) -> None:
         await sqlite_backend.save_nodes_batch([])
 
+    @pytest.mark.asyncio
+    async def test_replace_snapshot_rolls_back_to_previous_checkpoint(
+        self, sqlite_backend: SqliteBackend
+    ) -> None:
+        old = make_node(iteration=0, agent_name="atomic-agent")
+        await sqlite_backend.replace_snapshot(
+            agent_name="atomic-agent",
+            nodes=[old],
+            sessions=[],
+            branches={"main": old.id},
+            current_state={"checkpoint": "old"},
+            active_session_id="",
+            messages=[],
+        )
+
+        replacement = make_node(iteration=1, agent_name="atomic-agent")
+        with pytest.raises(sqlite3.IntegrityError):
+            # 同一主键重复插入使事务中途失败；旧 checkpoint 必须由 rollback 保留。
+            await sqlite_backend.replace_snapshot(
+                agent_name="atomic-agent",
+                nodes=[replacement, replacement],
+                sessions=[],
+                branches={"main": replacement.id},
+                current_state={"checkpoint": "new"},
+                active_session_id="",
+                messages=[],
+            )
+
+        chain = await sqlite_backend.load_chain("atomic-agent")
+        assert [node.id for node in chain] == [old.id]
+        meta = await sqlite_backend.load_chain_meta("atomic-agent")
+        assert meta is not None
+        assert meta[0] == {"main": old.id}
+        assert meta[2] == {"checkpoint": "old"}
+
 
 # ----------------------------------------------------------------
 # TestSqliteBackendMultiAgent — 多 Agent 隔离测试
@@ -449,31 +485,34 @@ class TestSqliteBackendConfig:
     """ContextConfig 创建 SqliteBackend 的集成测试。"""
 
     def test_create_sqlite_backend(self, tmp_path: Path) -> None:
-        from ghrah.core.config import ContextConfig
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(
             persistence_type="sqlite",
             persistence_root_dir=str(tmp_path),
             persistence_run_id="config-test",
         )
-        backend = config.create_persistence()
+        backend = create_persistence(config)
         assert isinstance(backend, SqliteBackend)
         assert backend.run_id == "config-test"
 
     def test_create_sqlite_backend_default_path(self) -> None:
-        from ghrah.core.config import ContextConfig
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(
             persistence_type="sqlite",
             persistence_run_id="default-path-test",
         )
-        backend = config.create_persistence()
+        backend = create_persistence(config)
         assert isinstance(backend, SqliteBackend)
         assert "ghrah.db" in str(backend.db_path)
 
     def test_unsupported_persistence_type(self) -> None:
-        from ghrah.core.config import ContextConfig
+        from ghrah.context.persistence import create_persistence
+        from ghrah.types.config_types import ContextConfig
 
         config = ContextConfig(persistence_type="redis")
         with pytest.raises(ValueError, match="Unsupported persistence_type"):
-            config.create_persistence()
+            create_persistence(config)

@@ -8,13 +8,18 @@
 直接实例化 SupervisorActor。
 """
 
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+from ghrah.chat.message import ChatMessage
+from ghrah.communication.errors import AgentNotFoundError, RegistryError
 from ghrah.communication.supervisor import SupervisorActor
+from ghrah.context.manager import ContextManager
+from ghrah.context.persistence.memory import InMemoryBackend
 from ghrah.core.config import AgentConfig
-from ghrah.core.exceptions import AgentNotFoundError, RegistryError
 
 
 @pytest.fixture
@@ -164,3 +169,183 @@ class TestSupervisorActor:
 
         result = supervisor._resolve_timeout("infinite-agent", None)
         assert result == -1
+
+
+class TestSupervisorPersistenceRecovery:
+    """spawn 必须 restore-first，且恢复失败不能注册空白 Agent。"""
+
+    @staticmethod
+    def _patch_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+        def build_actor(**kwargs: object) -> SimpleNamespace:
+            from ghrah.chat.factory import ChatMessageFactory
+
+            config = kwargs["config"]
+            assert isinstance(config, AgentConfig)
+            persistence_factory = kwargs.get("persistence_factory")
+            backend = persistence_factory(config) if callable(persistence_factory) else None
+            cm = ContextManager(
+                agent_name=config.effective_agent_id,
+                initial_state={},
+                system_prompt=config.system_prompt,
+                persistence=backend,
+                auto_persist=backend is not None,
+                message_factory=ChatMessageFactory(),
+            )
+            return SimpleNamespace(_context_manager=cm)
+
+        monkeypatch.setattr(
+            "ghrah.communication.supervisor.AgentBuilder.from_config",
+            build_actor,
+        )
+
+    @pytest.mark.asyncio
+    async def test_respawn_restores_existing_chain_without_overwrite(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch_builder(monkeypatch)
+        backend = InMemoryBackend()
+        config = AgentConfig(name="recoverable", system_prompt="stable")
+
+        first = SupervisorActor()
+        await first.spawn_agent(
+            config,
+            abilities=[],
+            persistence_factory=lambda _: backend,
+        )
+        first_info = first._registry.get_info("recoverable")
+        first_cm = first_info.actor_handle._context_manager
+        assert first.recovery_mode("recoverable") == "initialized"
+
+        first_cm.begin_iteration()
+        first_cm.apply_state_changes({"phase": "waiting"})
+        committed = first_cm.commit_iteration(ability_names=["conversation"])
+        await first.terminate_agent("recoverable")
+
+        old_node_ids = {node.id for node in await backend.load_chain("recoverable")}
+        assert committed.id in old_node_ids
+
+        restarted = SupervisorActor()
+        await restarted.spawn_agent(
+            config,
+            abilities=[],
+            persistence_factory=lambda _: backend,
+        )
+        restored_cm = restarted._registry.get_info("recoverable").actor_handle._context_manager
+
+        assert restarted.recovery_mode("recoverable") == "restored"
+        assert restored_cm.chain.active_head is not None
+        assert restored_cm.chain.active_head.id == committed.id
+        assert restored_cm.get_current_state() == {"phase": "waiting"}
+        assert old_node_ids.issubset(
+            {node.id for node in await backend.load_chain("recoverable")}
+        )
+
+    @pytest.mark.asyncio
+    async def test_restore_discards_legacy_messages_not_represented_by_chain_nodes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """旧 _build_response 产生的幽灵 AI 消息不能从后期 snapshot 复活。"""
+        self._patch_builder(monkeypatch)
+        backend = InMemoryBackend()
+        config = AgentConfig(name="recoverable", system_prompt="stable")
+
+        first = SupervisorActor()
+        await first.spawn_agent(config, abilities=[], persistence_factory=lambda _: backend)
+        cm = first._registry.get_info("recoverable").actor_handle._context_manager
+        for iteration in range(1, 6):
+            cm.begin_iteration()
+            cm.add_messages(
+                [
+                    ChatMessage.user(text_or_blocks=f"u{iteration}"),
+                    ChatMessage.ai(text=f"a{iteration}"),
+                ]
+            )
+            cm.commit_iteration(ability_names=["conversation"])
+            if iteration == 1:
+                # 模拟旧版在 commit 后额外追加、因而不属于任何 node delta 的消息。
+                cm.add_messages([ChatMessage.ai(text="ghost")])
+        await first.terminate_agent("recoverable")
+
+        restarted = SupervisorActor()
+        await restarted.spawn_agent(
+            config, abilities=[], persistence_factory=lambda _: backend
+        )
+        restored = restarted._registry.get_info("recoverable").actor_handle._context_manager
+        texts = [message.text for message in restored.message_store.current_messages]
+
+        assert "ghost" not in texts
+        assert texts == [
+            "stable",
+            "u1",
+            "a1",
+            "u2",
+            "a2",
+            "u3",
+            "a3",
+            "u4",
+            "a4",
+            "u5",
+            "a5",
+        ]
+        await restarted.terminate_agent("recoverable")
+
+    @pytest.mark.asyncio
+    async def test_corrupt_snapshot_fails_closed_without_overwrite(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch_builder(monkeypatch)
+        backend = InMemoryBackend()
+        await backend.save_chain_meta(
+            "broken",
+            branches={"main": "missing-node"},
+            current_state={"sentinel": True},
+        )
+        supervisor = SupervisorActor()
+
+        with pytest.raises(RegistryError, match="persistence recovery failed"):
+            await supervisor.spawn_agent(
+                AgentConfig(name="broken"),
+                abilities=[],
+                persistence_factory=lambda _: backend,
+            )
+
+        assert not supervisor._registry.exists("broken")
+        meta = await backend.load_chain_meta("broken")
+        assert meta is not None
+        assert meta[2] == {"sentinel": True}
+
+    @pytest.mark.asyncio
+    async def test_restore_first_across_fresh_sqlite_backends(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from ghrah.context.persistence.sqlite_backend import SqliteBackend
+
+        self._patch_builder(monkeypatch)
+        db_path = tmp_path / "action-chains.sqlite3"
+        config = AgentConfig(name="sqlite-agent")
+
+        first = SupervisorActor()
+        await first.spawn_agent(
+            config,
+            abilities=[],
+            persistence_factory=lambda _: SqliteBackend(db_path=db_path, run_id="run-1"),
+        )
+        first_cm = first._registry.get_info("sqlite-agent").actor_handle._context_manager
+        first_cm.begin_iteration()
+        first_cm.apply_state_changes({"checkpoint": 1})
+        committed = first_cm.commit_iteration(ability_names=["conversation"])
+        await first.terminate_agent("sqlite-agent")
+
+        restarted = SupervisorActor()
+        await restarted.spawn_agent(
+            config,
+            abilities=[],
+            persistence_factory=lambda _: SqliteBackend(db_path=db_path, run_id="run-2"),
+        )
+        restored_cm = restarted._registry.get_info("sqlite-agent").actor_handle._context_manager
+
+        assert restarted.recovery_mode("sqlite-agent") == "restored"
+        assert restored_cm.chain.active_head is not None
+        assert restored_cm.chain.active_head.id == committed.id
+        assert restored_cm.get_current_state() == {"checkpoint": 1}
+        await restarted.terminate_agent("sqlite-agent")

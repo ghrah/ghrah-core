@@ -16,6 +16,7 @@ import pytest
 from ghrah.abilities.base import ActionOutcome, ActionResult
 from ghrah.abilities.builtin.conversation import ConversationAbility
 from ghrah.abilities.builtin.end_task import EndTaskAbility
+from ghrah.abilities.builtin.fs_permissions import FSPermissionChecker
 from ghrah.abilities.builtin.read_file import ReadFileAbility, ReadFileInput
 from ghrah.abilities.context import AbilityExecutionContext
 from ghrah.abilities.hooks import Hook
@@ -371,16 +372,36 @@ class TestReadFileAbility:
             os.unlink(temp_path)
 
     async def test_execute_allowed_paths_denied(self) -> None:
-        """文件路径不在 allowed_paths 内，拒绝读取。"""
+        """文件路径不在 allowed_paths 内，拒绝读取（require_approval=False 直接拒绝）。"""
         ctx = _make_context(
             accumulated_data={"tool_args": {"file_path": "/etc/passwd"}},
         )
-        ability = ReadFileAbility(allowed_paths=["/tmp/data", "/home/user/docs"])
+        checker = FSPermissionChecker(allowed_paths=["/tmp/data", "/home/user/docs"],
+                                      require_approval=False)
+        ability = ReadFileAbility(permission_checker=checker)
         result = await ability.execute(ctx)
 
         assert result.outcome == ActionOutcome.FAILURE
         assert "Permission denied" in result.data["error"]
         assert "/etc/passwd" in result.data["error"]
+
+    async def test_execute_allowed_paths_pending(self) -> None:
+        """
+        文件路径不在 allowed_paths 内且 require_approval=True 时，Ability 不阻止（由 Hook 处理审批）
+        """
+        ctx = _make_context(
+            accumulated_data={"tool_args": {"file_path": "/etc/passwd"}},
+        )
+        checker = FSPermissionChecker(allowed_paths=["/tmp/data", "/home/user/docs"],
+                                      require_approval=True)
+        ability = ReadFileAbility(permission_checker=checker)
+        result = await ability.execute(ctx)
+
+        # require_approval=True 时，不在白名单的路径返回 (True, "pending")，
+        # Ability 仅检查 if not allowed，因此不阻止操作。
+        # 实际读取得看文件是否存在（本测试不验证这一点）。
+        # 关键是 Ability 层不抛权限错误——由 AccessApprovalHook 负责拦截审批。
+        assert "not in allowed paths" not in result.data.get("error", "")
 
     async def test_execute_allowed_paths_none_allows_all(self) -> None:
         """allowed_paths 为 None 时，不做权限检查。"""

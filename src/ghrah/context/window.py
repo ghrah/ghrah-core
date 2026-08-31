@@ -13,8 +13,10 @@
 
 设计要点：
 - 策略按注册顺序依次应用，形成处理管道
-- ChatMessage(role="system") 始终被保护，不参与截断/折叠
+- 系统消息（role="system"）始终被保护，不参与截断/折叠
 - token 估算使用字符近似法（1 token ≈ 4 字符），零外部依赖
+- 所有消息类型通过 WindowableMessage / WindowableBlock Protocol 解耦，
+  不依赖 ChatMessage 等具体类型
 """
 
 from __future__ import annotations
@@ -23,15 +25,10 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ghrah.chat.content import (
-    AudioBlock,
-    FileBlock,
-    ImageBlock,
-    TextBlock,
-    ToolCallBlock,
-    ToolResultBlock,
+from ghrah.core.window_protocol import (
+    MessageFactory,
+    WindowableMessage,
 )
-from ghrah.chat.message import ChatMessage
 
 __all__ = [
     "WindowStrategy",
@@ -48,38 +45,39 @@ def estimate_message_tokens(message: Any) -> int:
     """估算单条消息的 token 数。
 
     使用字符近似法：len(content) // CHARS_PER_TOKEN。
-    对于 ChatMessage，遍历 content_blocks 估算。
+    对于 WindowableMessage，遍历 content_blocks 估算。
     ToolCallBlock 额外按参数大小估算。
 
     Args:
-        message: ChatMessage 或兼容对象
+        message: WindowableMessage 或兼容对象
 
     Returns:
         估算的 token 数
     """
-    if isinstance(message, ChatMessage):
+    if hasattr(message, "content_blocks") and hasattr(message, "role"):
         total = 0
         for block in message.content_blocks:
-            if isinstance(block, TextBlock):
-                total += max(1, len(block.text) // _CHARS_PER_TOKEN)
-            elif isinstance(block, ToolCallBlock):
-                args_str = (
-                    json.dumps(block.arguments, ensure_ascii=False) if block.arguments else ""
-                )
-                total += max(1, len(args_str) // _CHARS_PER_TOKEN)
-                total += max(1, len(block.name) // _CHARS_PER_TOKEN)
-            elif isinstance(block, ToolResultBlock):
-                total += max(1, len(block.content) // _CHARS_PER_TOKEN)
-            elif isinstance(block, ImageBlock):
-                size = len(block.base64) if block.base64 else (len(block.url) if block.url else 0)
-                total += max(1, size // _CHARS_PER_TOKEN)
-            elif isinstance(block, AudioBlock):
-                total += max(1, len(block.data) // _CHARS_PER_TOKEN)
-            elif isinstance(block, FileBlock):
-                size = len(block.base64) if block.base64 else (len(block.url) if block.url else 0)
-                total += max(1, size // _CHARS_PER_TOKEN)
-            else:
-                total += 1
+            match getattr(block, "type", None):
+                case "text":
+                    total += max(1, len(getattr(block, "text", "")) // _CHARS_PER_TOKEN)
+                case "tool_call":
+                    args = getattr(block, "arguments", None)
+                    args_str = (
+                        json.dumps(args, ensure_ascii=False) if args else ""
+                    )
+                    total += max(1, len(args_str) // _CHARS_PER_TOKEN)
+                    total += max(1, len(getattr(block, "name", "")) // _CHARS_PER_TOKEN)
+                case "tool_result":
+                    total += max(1, len(getattr(block, "content", "")) // _CHARS_PER_TOKEN)
+                case "image" | "file":
+                    b64 = getattr(block, "base64", None)
+                    url = getattr(block, "url", None)
+                    size = len(b64) if b64 else (len(url) if url else 0)
+                    total += max(1, size // _CHARS_PER_TOKEN)
+                case "audio":
+                    total += max(1, len(getattr(block, "data", "")) // _CHARS_PER_TOKEN)
+                case _:
+                    total += 1
         return max(1, total)
 
     # 降级处理：尝试获取 text 属性
@@ -109,12 +107,12 @@ class WindowStrategy(ABC):
     策略不应修改原始消息列表（返回新列表）。
 
     系统消息保护约定：
-    - ChatMessage(role="system") 始终保留，不参与截断/折叠
+    - role="system" 的消息始终保留，不参与截断/折叠
     - 具体策略负责在 apply() 中分离和保护系统消息
     """
 
     @abstractmethod
-    async def apply(self, messages: list[ChatMessage], token_budget: int) -> list[ChatMessage]:
+    async def apply(self, messages: list[WindowableMessage], token_budget: int) -> list[WindowableMessage]:
         """应用压缩策略。
 
         Args:
@@ -134,8 +132,8 @@ class WindowStrategy(ABC):
 
 
 def _split_system_messages(
-    messages: list[ChatMessage],
-) -> tuple[list[ChatMessage], list[ChatMessage]]:
+    messages: list[WindowableMessage],
+) -> tuple[list[WindowableMessage], list[WindowableMessage]]:
     """将消息列表分为系统消息和非系统消息。
 
     Args:
@@ -144,8 +142,8 @@ def _split_system_messages(
     Returns:
         (system_messages, other_messages) 元组
     """
-    system_msgs: list[ChatMessage] = []
-    other_msgs: list[ChatMessage] = []
+    system_msgs: list[WindowableMessage] = []
+    other_msgs: list[WindowableMessage] = []
     for msg in messages:
         if msg.role == "system":
             system_msgs.append(msg)
@@ -168,15 +166,18 @@ class WindowManager:
     Args:
         strategies: 策略列表（按执行顺序）
         max_tokens: 默认 token 预算
+        message_factory: 消息构造工厂（用于需要构造新消息的策略）
     """
 
     def __init__(
         self,
         strategies: list[WindowStrategy] | None = None,
         max_tokens: int = 4096,
+        message_factory: MessageFactory | None = None,
     ) -> None:
         self._strategies: list[WindowStrategy] = list(strategies) if strategies else []
         self._max_tokens = max_tokens
+        self._message_factory = message_factory
 
     @property
     def max_tokens(self) -> int:
@@ -188,6 +189,11 @@ class WindowManager:
         """已注册的策略列表（副本）。"""
         return list(self._strategies)
 
+    @property
+    def message_factory(self) -> MessageFactory | None:
+        """消息构造工厂。"""
+        return self._message_factory
+
     def add_strategy(self, strategy: WindowStrategy) -> None:
         """添加策略到管道末尾。
 
@@ -197,8 +203,8 @@ class WindowManager:
         self._strategies.append(strategy)
 
     async def apply(
-        self, messages: list[ChatMessage], max_tokens: int | None = None
-    ) -> list[ChatMessage]:
+        self, messages: list[WindowableMessage], max_tokens: int | None = None
+    ) -> list[WindowableMessage]:
         """按顺序应用所有策略。
 
         Args:
@@ -216,7 +222,7 @@ class WindowManager:
 
         return result
 
-    def estimate_tokens(self, messages: list[ChatMessage]) -> int:
+    def estimate_tokens(self, messages: list[WindowableMessage]) -> int:
         """估算消息列表的总 token 数。
 
         Args:
